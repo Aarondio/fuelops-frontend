@@ -8,10 +8,10 @@ class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
   @override
-  State<AppShell> createState() => _AppShellState();
+  State<AppShell> createState() => AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class AppShellState extends State<AppShell> {
   int _currentIndex = 0;
 
   final _screens = const [
@@ -20,6 +20,12 @@ class _AppShellState extends State<AppShell> {
     HistoryScreen(),
     ProfileScreen(),
   ];
+
+  void switchToTab(int index) {
+    if (index >= 0 && index < _screens.length) {
+      setState(() => _currentIndex = index);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,22 +40,22 @@ class _AppShellState extends State<AppShell> {
             setState(() => _currentIndex = index),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
+            icon: Icon(Icons.grid_view_rounded),
+            selectedIcon: Icon(Icons.grid_view_rounded),
             label: 'Home',
           ),
           NavigationDestination(
-            icon: Icon(Icons.local_gas_station_outlined),
+            icon: Icon(Icons.local_gas_station_rounded),
             selectedIcon: Icon(Icons.local_gas_station_rounded),
             label: 'Pumps',
           ),
           NavigationDestination(
-            icon: Icon(Icons.history_outlined),
+            icon: Icon(Icons.history_rounded),
             selectedIcon: Icon(Icons.history_rounded),
             label: 'History',
           ),
           NavigationDestination(
-            icon: Icon(Icons.person_outline),
+            icon: Icon(Icons.person_rounded),
             selectedIcon: Icon(Icons.person_rounded),
             label: 'Profile',
           ),

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'app_shell.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../config/app_config.dart';
 import '../providers/auth_provider.dart';
 import '../providers/reading_provider.dart';
 import '../services/sync_service.dart';
+import '../services/format_service.dart';
 import '../theme/app_theme.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -24,23 +26,12 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  String _greeting() {
-    final hour = DateTime.now().hour;
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    return 'Good evening';
-  }
-
-  String _shiftLabel() {
-    return AppConfig.getCurrentShift().name;
-  }
-
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final reading = context.watch<ReadingProvider>();
     final sync = context.watch<SyncService>();
-    final dateFormat = DateFormat('EEEE, MMM d');
+    final dateFormat = DateFormat('EEEE, MMMM d');
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -52,304 +43,278 @@ class _HomeScreenState extends State<HomeScreen> {
             await reading.loadPumps();
             await reading.loadReadings();
           },
-          child: reading.isLoading && reading.pumps.isEmpty
-              ? const Center(
-                  child: CircularProgressIndicator(
-                      color: AppColors.primary))
-              : ListView(
-                  padding: AppSpacing.pagePadding,
-                  children: [
-                    // ── Greeting ────────────────────────
-                    Text(
-                      _greeting(),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      auth.user?.name ?? 'Manager',
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(Icons.calendar_today_outlined,
-                            size: 13, color: AppColors.textMuted),
-                        const SizedBox(width: 6),
-                        Text(
-                          dateFormat.format(DateTime.now()),
-                          style: const TextStyle(
-                              fontSize: 13, color: AppColors.textMuted),
-                        ),
-                        const SizedBox(width: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.12),
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.sm),
-                          ),
-                          child: Text(
-                            _shiftLabel(),
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // ── Offline Banner ──────────────────
-                    if (!reading.isOnline)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 16),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppColors.warningLight,
-                          borderRadius:
-                              BorderRadius.circular(AppRadius.md),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.wifi_off,
-                                size: 16, color: AppColors.warning),
-                            const SizedBox(width: 10),
-                            const Expanded(
-                              child: Text(
-                                'You\'re offline — readings saved locally',
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    color: AppColors.warning),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                    // ── Status Cards ────────────────────
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _StatusTile(
-                            icon: Icons.local_gas_station_outlined,
-                            label: 'Pumps',
-                            value: reading.pumps.length.toString(),
-                            color: AppColors.primary,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _StatusTile(
-                            icon: Icons.speed_outlined,
-                            label: 'Readings Today',
-                            value: reading.readings.length.toString(),
-                            color: AppColors.success,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _StatusTile(
-                            icon: Icons.cloud_upload_outlined,
-                            label: 'Pending',
-                            value: sync.pendingCount.toString(),
-                            color: sync.pendingCount > 0
-                                ? AppColors.warning
-                                : AppColors.textMuted,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 28),
-
-                    // ── Volume Summary ──────────────────
-                    if (reading.readings.isNotEmpty) ...[
-                      Container(
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius:
-                              BorderRadius.circular(AppRadius.lg),
-                          border: Border(
-                            left: BorderSide(
-                              color: AppColors.primary,
-                              width: 3,
-                            ),
-                          ),
-                        ),
+          child: CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              // ── Header ───────────────────────────
+              SliverPadding(
+                padding: AppSpacing.pagePadding,
+                sliver: SliverToBoxAdapter(
+                  child: Row(
+                    children: [
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Today\'s Volume',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: AppColors.textMuted,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  reading.readings
-                                      .fold<double>(0,
-                                          (sum, r) =>
-                                              sum +
-                                              (r.volumeSold ?? 0))
-                                      .toStringAsFixed(1),
-                                  style: const TextStyle(
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                const Padding(
-                                  padding:
-                                      EdgeInsets.only(bottom: 5),
-                                  child: Text(
-                                    'Litres',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: AppColors.textMuted,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                    ],
-
-                    // ── Recent Activity ─────────────────
-                    const Text(
-                      'Recent Activity',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    if (reading.readings.isEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(32),
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius:
-                              BorderRadius.circular(AppRadius.lg),
-                        ),
-                        child: Column(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceLight,
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(Icons.speed_outlined,
-                                  size: 36,
-                                  color: AppColors.textMuted),
-                            ),
-                            const SizedBox(height: 12),
-                            const Text(
-                              'No readings yet today',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w500,
-                                color: AppColors.textSecondary,
+                            Text(
+                              dateFormat.format(DateTime.now()).toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.primary,
+                                letterSpacing: 1.2,
                               ),
                             ),
                             const SizedBox(height: 4),
-                            const Text(
-                              'Go to the Pumps tab to capture your first reading',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  color: AppColors.textMuted),
+                            Text(
+                              auth.user?.name ?? 'Manager',
+                              style: const TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.w900,
+                                color: AppColors.textPrimary,
+                                letterSpacing: -1,
+                              ),
                             ),
                           ],
                         ),
-                      )
-                    else
-                      ...reading.readings.take(5).map(
-                            (r) => _ActivityItem(
-                              pumpName:
-                                  r.pumpName ?? 'Pump #${r.pumpId}',
-                              volume: r.volumeSold ?? 0,
-                              shift: r.shift,
-                              time: DateFormat('h:mm a')
-                                  .format(r.createdAt),
-                              isOpen: r.isOpen,
+                      ),
+                      _HeaderAction(
+                        icon: Icons.notifications_none_rounded,
+                        onTap: () => Navigator.of(context).pushNamed('/pending'),
+                      ),
+                      const SizedBox(width: 10),
+                      _ProfileAvatar(name: auth.user?.name ?? 'M'),
+                    ],
+                  ),
+                ),
+              ),
+
+              // ── Offline Banner ───────────────────
+              if (!reading.isOnline)
+                SliverToBoxAdapter(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.error.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.cloud_off_rounded, color: AppColors.error, size: 18),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Text(
+                            'Offline Mode Active',
+                            style: TextStyle(
+                              color: AppColors.error,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
                             ),
                           ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              // ── Error Banner ──────────────────────
+              if (reading.error != null)
+                SliverToBoxAdapter(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            reading.error!,
+                            style: const TextStyle(
+                              color: AppColors.warning,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => reading.clearError(),
+                          child: const Icon(Icons.close, color: AppColors.warning, size: 16),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
 
-                    const SizedBox(height: 24),
+              // ── Hero Volume Card ─────────────────
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                  child: _HeroVolumeCard(
+                    volume: reading.readings.fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)),
+                    shift: AppConfig.getCurrentShift().name,
+                  ),
+                ),
+              ),
+
+              // ── Stats Grid ───────────────────────
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                sliver: SliverGrid.count(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 1.6,
+                  children: [
+                    _StatWidget(
+                      label: 'Active Pumps',
+                      value: FormatService.formatInteger(reading.pumps.length),
+                      icon: Icons.local_gas_station_rounded,
+                      color: AppColors.primary,
+                    ),
+                    _StatWidget(
+                      label: 'Pending Sync',
+                      value: FormatService.formatInteger(sync.pendingCount),
+                      icon: Icons.sync_rounded,
+                      color: sync.pendingCount > 0 ? AppColors.warning : AppColors.success,
+                      isStatus: true,
+                    ),
                   ],
                 ),
+              ),
+
+              // ── Recent Activity ──────────────────
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
+                sliver: SliverToBoxAdapter(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Recent Activity',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          // Navigate to History tab in AppShell
+                          final shellState = context.findAncestorStateOfType<AppShellState>();
+                          shellState?.switchToTab(2);
+                        },
+                        child: const Text('See All', style: TextStyle(fontSize: 13)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              if (reading.readings.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _EmptyActivity(),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final r = reading.readings[index];
+                        return _ActivityTile(
+                          pumpName: r.pumpName ?? 'Pump #${r.pumpId}',
+                          volume: r.volumeSold ?? 0,
+                          shift: r.shift,
+                          time: DateFormat('HH:mm').format(r.createdAt),
+                          isOpen: r.isOpen,
+                        );
+                      },
+                      childCount: reading.readings.take(5).length,
+                    ),
+                  ),
+                ),
+
+              const SliverToBoxAdapter(child: SizedBox(height: 32)),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-// ── Compact status tile ─────────────────────────────────
-class _StatusTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
+class _HeroVolumeCard extends StatelessWidget {
+  final double volume;
+  final String shift;
 
-  const _StatusTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
+  const _HeroVolumeCard({required this.volume, required this.shift});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+      height: 160,
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),
+        color: AppColors.primary,
+        gradient: LinearGradient(
+          colors: [AppColors.primary, AppColors.primaryDark],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(height: 8),
           Text(
-            value,
+            shift.toUpperCase(),
             style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
+            ),
+          ),
+          const Spacer(),
+          const Text(
+            'Daily Output',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 2),
-          Text(
-            label,
-            style:
-                const TextStyle(fontSize: 11, color: AppColors.textMuted),
-            textAlign: TextAlign.center,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                FormatService.formatDecimal(volume),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 40,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -1,
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8, left: 6),
+                child: Text(
+                  'Litres',
+                  style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -357,50 +322,93 @@ class _StatusTile extends StatelessWidget {
   }
 }
 
-// ── Recent activity timeline item ───────────────────────
-class _ActivityItem extends StatelessWidget {
+class _StatWidget extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+  final bool isStatus;
+
+  const _StatWidget({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+    this.isStatus = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Icon(icon, color: color, size: 20),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: isStatus ? color : AppColors.textPrimary,
+                ),
+              ),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActivityTile extends StatelessWidget {
   final String pumpName;
   final double volume;
   final String shift;
   final String time;
   final bool isOpen;
 
-  const _ActivityItem({
+  const _ActivityTile({
     required this.pumpName,
     required this.volume,
     required this.shift,
     required this.time,
-    this.isOpen = false,
+    required this.isOpen,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(AppRadius.md),
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: isOpen
-                  ? AppColors.amber.withValues(alpha: 0.12)
-                  : AppColors.success.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppRadius.md),
-            ),
-            child: Icon(
-              isOpen
-                  ? Icons.schedule_outlined
-                  : Icons.check_circle_outline,
-              color: isOpen ? AppColors.amber : AppColors.success,
-              size: 18,
-            ),
+          Icon(
+            isOpen ? Icons.timer_outlined : Icons.check_circle_rounded,
+            color: isOpen ? AppColors.amber : AppColors.success,
+            size: 18,
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,17 +417,17 @@ class _ActivityItem extends StatelessWidget {
                   pumpName,
                   style: const TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 2),
                 Text(
-                  isOpen
-                      ? 'Awaiting closing · ${shift.capitalize()}'
-                      : '${volume.toStringAsFixed(1)} L · ${shift.capitalize()}',
-                  style: const TextStyle(
-                      fontSize: 12, color: AppColors.textSecondary),
+                  isOpen ? 'Awaiting closing' : '${FormatService.formatDecimal(volume)} L sold',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isOpen ? AppColors.amber : AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
@@ -427,7 +435,10 @@ class _ActivityItem extends StatelessWidget {
           Text(
             time,
             style: const TextStyle(
-                fontSize: 12, color: AppColors.textMuted),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
           ),
         ],
       ),
@@ -435,7 +446,78 @@ class _ActivityItem extends StatelessWidget {
   }
 }
 
-extension StringCap on String {
-  String capitalize() =>
-      isEmpty ? this : '${this[0].toUpperCase()}${substring(1)}';
+class _HeaderAction extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _HeaderAction({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: AppColors.textPrimary, size: 20),
+      ),
+    );
+  }
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  final String name;
+
+  const _ProfileAvatar({required this.name});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [AppColors.primary, AppColors.primaryLight],
+        ),
+      ),
+      child: Center(
+        child: Text(
+          name.isNotEmpty ? name[0].toUpperCase() : '?',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            fontSize: 16,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyActivity extends StatelessWidget {
+  const _EmptyActivity();
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.query_stats_rounded, size: 48, color: AppColors.surfaceLight),
+          const SizedBox(height: 12),
+          const Text(
+            'No Recent Activity',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

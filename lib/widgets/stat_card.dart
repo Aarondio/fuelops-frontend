@@ -41,16 +41,19 @@ class StatCard extends StatelessWidget {
             value,
             style: const TextStyle(
               fontSize: 24,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w900,
               color: AppColors.textPrimary,
+              letterSpacing: -0.5,
             ),
           ),
           const SizedBox(height: 2),
           Text(
-            label,
+            label.toUpperCase(),
             style: const TextStyle(
-              fontSize: 13,
-              color: AppColors.textSecondary,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              color: AppColors.textMuted,
+              letterSpacing: 0.5,
             ),
           ),
         ],

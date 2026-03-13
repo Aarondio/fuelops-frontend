@@ -40,6 +40,7 @@ void main() async {
     apiService: apiService,
     syncService: syncService,
     connectivityService: connectivityService,
+    databaseService: databaseService,
     authProvider: authProvider,
   ));
 }
@@ -48,6 +49,7 @@ class MeterReaderApp extends StatelessWidget {
   final ApiService apiService;
   final SyncService syncService;
   final ConnectivityService connectivityService;
+  final DatabaseService databaseService;
   final AuthProvider authProvider;
 
   const MeterReaderApp({
@@ -55,6 +57,7 @@ class MeterReaderApp extends StatelessWidget {
     required this.apiService,
     required this.syncService,
     required this.connectivityService,
+    required this.databaseService,
     required this.authProvider,
   });
 
@@ -63,11 +66,13 @@ class MeterReaderApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: authProvider),
+        Provider.value(value: databaseService),
         ChangeNotifierProvider(
           create: (_) => ReadingProvider(
             apiService: apiService,
             syncService: syncService,
             connectivityService: connectivityService,
+            databaseService: databaseService,
           ),
         ),
         ChangeNotifierProvider.value(value: syncService),
@@ -118,21 +123,32 @@ class _AuthWrapperState extends State<AuthWrapper> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(20),
+                      width: 80,
+                      height: 80,
                       decoration: const BoxDecoration(
-                        color: AppColors.primary,
                         shape: BoxShape.circle,
+                        color: AppColors.primary,
                       ),
                       child: const Icon(
-                        Icons.local_gas_station,
-                        size: 48,
+                        Icons.local_gas_station_rounded,
+                        size: 40,
                         color: Colors.white,
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 40),
                     const CircularProgressIndicator(
                       color: AppColors.primary,
-                      strokeWidth: 2.5,
+                      strokeWidth: 3,
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'INITIALIZING SYSTEM',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.primary,
+                        letterSpacing: 2,
+                      ),
                     ),
                   ],
                 ),

@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/reading_provider.dart';
+import '../services/format_service.dart';
 import '../theme/app_theme.dart';
-
-import '../widgets/stat_card.dart';
 import '../widgets/reading_card.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -16,13 +15,32 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   DateTime _selectedDate = DateTime.now();
+  final ScrollController _dateScrollController = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ReadingProvider>().loadReadings(date: _selectedDate);
+      _scrollToActiveDate();
     });
+  }
+
+  void _scrollToActiveDate() {
+    if (_dateScrollController.hasClients) {
+      _dateScrollController.animateTo(
+        _dateScrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   Future<void> _selectDate() async {
@@ -40,8 +58,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
               surface: AppColors.surface,
               onSurface: AppColors.textPrimary,
             ),
-            dialogTheme: const DialogThemeData(
+            dialogTheme: DialogThemeData(
               backgroundColor: AppColors.surface,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.lg)),
             ),
           ),
           child: child!,
@@ -50,173 +69,354 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
 
     if (date != null && date != _selectedDate && mounted) {
-      setState(() => _selectedDate = date);
+      setState(() {
+        _selectedDate = date;
+        _searchController.clear(); // Reset search when date changes
+      });
       context.read<ReadingProvider>().loadReadings(date: date);
     }
   }
 
   @override
+  void dispose() {
+    _dateScrollController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final readingProvider = context.watch<ReadingProvider>();
-    final dateFormat = DateFormat('EEE, MMM d, yyyy');
+
+    final filteredReadings = readingProvider.readings.where((reading) {
+      final name = (reading.pumpName ?? 'Pump #${reading.pumpId}').toLowerCase();
+      final shift = reading.shift.toLowerCase();
+      return name.contains(_searchQuery) || shift.contains(_searchQuery);
+    }).toList();
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Column(
-        children: [
-          // ── Header ──────────────────────────────
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 16, 20, 0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'History',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ),
-          ),
-          // Date Selector
-          GestureDetector(
-            onTap: _selectDate,
-            child: Container(
-              margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-
-              ),
+          children: [
+            // ── Header ───────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.calendar_today_outlined,
-                      color: AppColors.primary, size: 18),
-                  const SizedBox(width: 10),
-                  Text(
-                    dateFormat.format(_selectedDate),
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'History',
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w900,
+                            color: AppColors.textPrimary,
+                            letterSpacing: -1,
+                          ),
+                        ),
+                        Text(
+                          'OPERATIONAL ARCHIVE',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.primary,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  const Icon(Icons.keyboard_arrow_down,
-                      color: AppColors.textMuted, size: 20),
+                  _HeaderAction(
+                    icon: Icons.calendar_month_rounded,
+                    onTap: _selectDate,
+                  ),
+                  const SizedBox(width: 10),
+                  _HeaderAction(
+                    icon: Icons.refresh_rounded,
+                    onTap: () => readingProvider.loadReadings(date: _selectedDate),
+                  ),
                 ],
               ),
             ),
-          ),
 
-          // Summary Row
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: StatCard(
-                    icon: Icons.speed,
-                    label: 'Readings',
-                    value: readingProvider.readings.length.toString(),
-                    accentColor: AppColors.primary,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: StatCard(
-                    icon: Icons.local_gas_station,
-                    label: 'Total Volume',
-                    value:
-                        '${readingProvider.readings.fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)).toStringAsFixed(1)} L',
-                    accentColor: AppColors.success,
-                  ),
-                ),
-              ],
+            // ── Horizontal Date Scroller ──────────
+            _HorizontalDateScroller(
+              scrollController: _dateScrollController,
+              selectedDate: _selectedDate,
+              onDateSelected: (date) {
+                setState(() {
+                  _selectedDate = date;
+                  _searchController.clear();
+                });
+                readingProvider.loadReadings(date: date);
+              },
             ),
-          ),
-          const SizedBox(height: 16),
 
-          // Readings List
-          Expanded(
-            child: RefreshIndicator(
-              color: AppColors.primary,
-              backgroundColor: AppColors.surface,
-              onRefresh: () =>
-                  readingProvider.loadReadings(date: _selectedDate),
-              child: readingProvider.isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.primary,
-                      ),
-                    )
-                  : readingProvider.readings.isEmpty
-                      ? _buildEmptyState()
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: readingProvider.readings.length,
-                          itemBuilder: (context, index) {
-                            final reading = readingProvider.readings[index];
-                            return _buildReadingCard(reading);
-                          },
-                        ),
+            // ── Search Bar ─────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: TextField(
+                controller: _searchController,
+                style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  hintText: 'Filter logs by pump or shift...',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          onPressed: () => _searchController.clear(),
+                        )
+                      : null,
+                ),
+              ),
             ),
-          ),
-        ],
-      ),
-      ),
-    );
-  }
 
-  Widget _buildReadingCard(reading) {
-    final timeFormat = DateFormat('h:mm a');
+            // ── Summary Metrics ──────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _CompactStat(
+                      label: 'TOTAL LOGS',
+                      value: FormatService.formatInteger(readingProvider.readings.length),
+                      icon: Icons.analytics_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _CompactStat(
+                      label: 'TOTAL VOLUME',
+                      value: '${FormatService.formatDecimal(readingProvider.readings.fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)))}L',
+                      icon: Icons.water_drop_rounded,
+                      color: AppColors.success,
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
-    return ReadingCard(
-      pumpName: reading.pumpName ?? 'Pump #${reading.pumpId}',
-      shift: reading.shift,
-      openingReading: reading.openingReading,
-      closingReading: reading.closingReading,
-      time: timeFormat.format(reading.createdAt),
-      notes: reading.notes,
+            // ── Logs List ────────────────────────
+            Expanded(
+              child: RefreshIndicator(
+                color: AppColors.primary,
+                backgroundColor: AppColors.surface,
+                onRefresh: () => readingProvider.loadReadings(date: _selectedDate),
+                child: readingProvider.isLoading
+                    ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                    : filteredReadings.isEmpty
+                        ? _buildEmptyState()
+                        : ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                            physics: const BouncingScrollPhysics(),
+                            itemCount: filteredReadings.length,
+                            itemBuilder: (context, index) {
+                              final reading = filteredReadings[index];
+                              return ReadingCard(
+                                pumpName: reading.pumpName ?? 'Pump #${reading.pumpId}',
+                                shift: reading.shift,
+                                openingReading: reading.openingReading,
+                                closingReading: reading.closingReading,
+                                time: DateFormat('HH:mm').format(reading.createdAt),
+                                notes: reading.notes,
+                              );
+                            },
+                          ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
+    final isFiltering = _searchQuery.isNotEmpty;
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: Container(
+        height: 300,
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              isFiltering ? Icons.search_off_rounded : Icons.history_toggle_off_rounded,
+              size: 48,
               color: AppColors.surfaceLight,
-              shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.history_outlined,
-                size: 40, color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'No readings for this date',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: AppColors.textSecondary,
+            const SizedBox(height: 16),
+            Text(
+              isFiltering ? 'No matching records' : 'No records found for this date',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
             ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Tap the date above to select another day',
-            style: TextStyle(
-              fontSize: 13,
-              color: AppColors.textMuted,
+            const SizedBox(height: 4),
+            Text(
+              isFiltering ? 'Try a different keyword' : 'Try selecting a different day',
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Custom Widgets ──────────────────────────────────
+
+class _HorizontalDateScroller extends StatelessWidget {
+  final ScrollController scrollController;
+  final DateTime selectedDate;
+  final Function(DateTime) onDateSelected;
+
+  const _HorizontalDateScroller({
+    required this.scrollController,
+    required this.selectedDate,
+    required this.onDateSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Generate last 14 days
+    final dates = List.generate(14, (index) => 
+      DateTime.now().subtract(Duration(days: index))
+    ).reversed.toList();
+
+    return SizedBox(
+      height: 80,
+      child: ListView.builder(
+        controller: scrollController,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        scrollDirection: Axis.horizontal,
+        itemCount: dates.length,
+        itemBuilder: (context, index) {
+          final date = dates[index];
+          final isSelected = DateUtils.isSameDay(date, selectedDate);
+          final isToday = DateUtils.isSameDay(date, DateTime.now());
+
+          return GestureDetector(
+            onTap: () => onDateSelected(date),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 56,
+              margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? AppColors.primary : AppColors.surface,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    DateFormat('E').format(date).toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: isSelected ? Colors.white : AppColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    DateFormat('d').format(date),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: isSelected ? Colors.white : AppColors.textPrimary,
+                    ),
+                  ),
+                  if (isToday)
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: isSelected ? Colors.white : AppColors.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CompactStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color? color;
+
+  const _CompactStat({
+    required this.label,
+    required this.value,
+    required this.icon,
+    this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color ?? AppColors.primary),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 8,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textMuted,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _HeaderAction extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _HeaderAction({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: AppColors.textPrimary, size: 20),
       ),
     );
   }

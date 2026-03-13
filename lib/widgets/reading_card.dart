@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/format_service.dart';
 import '../theme/app_theme.dart';
 
 class ReadingCard extends StatelessWidget {
@@ -41,19 +42,19 @@ class ReadingCard extends StatelessWidget {
         children: [
           // Header
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    color: accent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
-                    Icons.local_gas_station,
+                    Icons.local_gas_station_rounded,
                     color: accent,
-                    size: 20,
+                    size: 18,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -65,7 +66,7 @@ class ReadingCard extends StatelessWidget {
                         pumpName,
                         style: const TextStyle(
                           fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                           color: AppColors.textPrimary,
                         ),
                       ),
@@ -73,9 +74,9 @@ class ReadingCard extends StatelessWidget {
                       Text(
                         shift.toUpperCase(),
                         style: const TextStyle(
-                          fontSize: 11,
+                          fontSize: 9,
                           color: AppColors.textMuted,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w800,
                           letterSpacing: 0.5,
                         ),
                       ),
@@ -83,27 +84,13 @@ class ReadingCard extends StatelessWidget {
                   ),
                 ),
                 if (isOpen)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.amber.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                    ),
-                    child: const Text(
-                      'Open',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: AppColors.amber,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                if (!isOpen && time != null)
+                  _StatusPill(label: 'OPEN', color: AppColors.amber)
+                else if (time != null)
                   Text(
                     time!,
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
                       color: AppColors.textMuted,
                     ),
                   ),
@@ -114,41 +101,48 @@ class ReadingCard extends StatelessWidget {
 
           // Meter values
           Container(
-            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppColors.surfaceLight,
+              color: AppColors.surfaceLight.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(AppRadius.md),
             ),
             child: Row(
               children: [
                 MeterValue(
-                    label: 'Opening',
-                    value: openingReading.toStringAsFixed(1)),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Icon(Icons.arrow_forward,
-                      color: AppColors.textMuted, size: 16),
-                ),
+                    label: 'OPENING',
+                    value: FormatService.formatDecimal(openingReading)),
+                const SizedBox(width: 12),
                 MeterValue(
-                  label: 'Closing',
-                  value: closingReading?.toStringAsFixed(1) ?? '—',
+                  label: 'CLOSING',
+                  value: FormatService.formatDecimal(closingReading),
                   valueColor: isOpen ? AppColors.textMuted : null,
                 ),
-                Container(
-                  width: 1,
-                  height: 36,
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  color: AppColors.surfaceBorder,
-                ),
-                MeterValue(
-                  label: 'Volume',
-                  value: volumeSold != null
-                      ? '${volumeSold!.toStringAsFixed(1)} L'
-                      : '—',
-                  valueColor: volumeSold != null
-                      ? AppColors.success
-                      : AppColors.textMuted,
+                const Spacer(),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text(
+                      'VOLUME',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    Text(
+                      volumeSold != null
+                          ? '${FormatService.formatDecimal(volumeSold)} L'
+                          : '—',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: volumeSold != null
+                            ? AppColors.success
+                            : AppColors.textMuted,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -156,24 +150,23 @@ class ReadingCard extends StatelessWidget {
 
           // Notes
           if (notes != null && notes!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.note_outlined,
-                      size: 14, color: AppColors.textMuted),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      notes!,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceLight.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  notes!,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: AppColors.textSecondary,
                   ),
-                ],
+                ),
               ),
             ),
         ],
@@ -182,7 +175,6 @@ class ReadingCard extends StatelessWidget {
   }
 }
 
-/// Shared meter value widget used in [ReadingCard] and pending screen.
 class MeterValue extends StatelessWidget {
   final String label;
   final String value;
@@ -197,26 +189,48 @@ class MeterValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 11,
-              color: AppColors.textMuted,
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 8,
+            fontWeight: FontWeight.w800,
+            color: AppColors.textMuted,
+            letterSpacing: 0.5,
           ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: valueColor ?? AppColors.textPrimary,
-            ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+            color: valueColor ?? AppColors.textPrimary,
           ),
-        ],
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _StatusPill({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(100),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: color),
       ),
     );
   }

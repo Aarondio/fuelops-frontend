@@ -29,6 +29,7 @@ void main() {
               apiService: apiService,
               syncService: syncService,
               connectivityService: connectivityService,
+              databaseService: databaseService,
             ),
           ),
           ChangeNotifierProvider.value(value: syncService),

@@ -227,6 +227,14 @@ class ApiService {
     return authToken != null;
   }
 
+  /// Fetch the authenticated user's profile from the server
+  Future<User> getProfile() async {
+    final response = await _get(Uri.parse('$_baseUrl/profile'));
+
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return User.fromJson(data['data'] as Map<String, dynamic>);
+  }
+
   /// Manually refresh the token (can be called proactively)
   Future<bool> refreshToken() async {
     return _refreshToken();
@@ -236,9 +244,9 @@ class ApiService {
   Future<List<Pump>> getPumps() async {
     final response = await _get(Uri.parse('$_baseUrl/pumps'));
 
-    final data = await _handleResponse(response, allowRefresh: false);
+    final data = json.decode(response.body) as Map<String, dynamic>;
     final pumps = (data['data'] as List)
-        .map((json) => Pump.fromJson(json as Map<String, dynamic>))
+        .map((j) => Pump.fromJson(j as Map<String, dynamic>))
         .toList();
 
     return pumps;
@@ -255,9 +263,9 @@ class ApiService {
 
     final response = await _get(uri);
 
-    final data = await _handleResponse(response, allowRefresh: false);
+    final data = json.decode(response.body) as Map<String, dynamic>;
     final readings = (data['data'] as List)
-        .map((json) => Reading.fromJson(json as Map<String, dynamic>))
+        .map((j) => Reading.fromJson(j as Map<String, dynamic>))
         .toList();
 
     return readings;
@@ -287,7 +295,7 @@ class ApiService {
       body: body,
     );
 
-    final data = await _handleResponse(response, allowRefresh: false);
+    final data = json.decode(response.body) as Map<String, dynamic>;
     return Reading.fromJson(data['data'] as Map<String, dynamic>);
   }
 
@@ -305,8 +313,31 @@ class ApiService {
       body: body,
     );
 
-    final data = await _handleResponse(response, allowRefresh: false);
+    final data = json.decode(response.body) as Map<String, dynamic>;
     return Reading.fromJson(data['data'] as Map<String, dynamic>);
+  }
+
+  // Profile
+
+  Future<void> updateProfile({required String name, required String email}) async {
+    await _put(
+      Uri.parse('$_baseUrl/profile'),
+      body: {'name': name, 'email': email},
+    );
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _put(
+      Uri.parse('$_baseUrl/profile/password'),
+      body: {
+        'current_password': currentPassword,
+        'password': newPassword,
+        'password_confirmation': newPassword,
+      },
+    );
   }
 
   // Uploads

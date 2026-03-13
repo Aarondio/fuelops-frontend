@@ -16,7 +16,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -29,7 +29,7 @@ class DatabaseService {
         pump_id INTEGER NOT NULL,
         pump_name TEXT,
         opening_reading REAL NOT NULL,
-        closing_reading REAL NOT NULL,
+        closing_reading REAL,
         date TEXT NOT NULL,
         shift TEXT NOT NULL,
         notes TEXT,
@@ -38,7 +38,35 @@ class DatabaseService {
         created_at TEXT NOT NULL,
         sync_status TEXT DEFAULT 'pending',
         error_message TEXT,
-        server_id INTEGER
+        server_id INTEGER,
+        retry_count INTEGER DEFAULT 0,
+        last_retry_at TEXT,
+        is_closing_only INTEGER DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE cached_pumps (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        product_type TEXT NOT NULL,
+        current_price REAL NOT NULL,
+        is_active INTEGER DEFAULT 1
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE cached_readings (
+        id INTEGER PRIMARY KEY,
+        pump_id INTEGER NOT NULL,
+        pump_name TEXT,
+        opening_reading REAL NOT NULL,
+        closing_reading REAL,
+        volume_sold REAL,
+        date TEXT NOT NULL,
+        shift TEXT NOT NULL,
+        is_open INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL
       )
     ''');
   }
@@ -47,6 +75,68 @@ class DatabaseService {
     if (oldVersion < 2) {
       await db.execute('ALTER TABLE pending_readings ADD COLUMN server_id INTEGER');
     }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE pending_readings ADD COLUMN retry_count INTEGER DEFAULT 0');
+      await db.execute('ALTER TABLE pending_readings ADD COLUMN last_retry_at TEXT');
+    }
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE pending_readings ADD COLUMN is_closing_only INTEGER DEFAULT 0');
+      await db.execute('''
+        CREATE TABLE cached_pumps (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          product_type TEXT NOT NULL,
+          current_price REAL NOT NULL,
+          is_active INTEGER DEFAULT 1
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE cached_readings (
+          id INTEGER PRIMARY KEY,
+          pump_id INTEGER NOT NULL,
+          pump_name TEXT,
+          opening_reading REAL NOT NULL,
+          closing_reading REAL,
+          volume_sold REAL,
+          date TEXT NOT NULL,
+          shift TEXT NOT NULL,
+          is_open INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL
+        )
+      ''');
+    }
+  }
+
+  // Pumps Cache
+  Future<void> cachePumps(List<Map<String, dynamic>> pumps) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('cached_pumps');
+      for (var pump in pumps) {
+        await txn.insert('cached_pumps', pump);
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedPumps() async {
+    final db = await database;
+    return await db.query('cached_pumps');
+  }
+
+  // Readings Cache
+  Future<void> cacheReadings(List<Map<String, dynamic>> readings) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('cached_readings');
+      for (var reading in readings) {
+        await txn.insert('cached_readings', reading);
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedReadings() async {
+    final db = await database;
+    return await db.query('cached_readings', orderBy: 'created_at DESC');
   }
 
   // Pending Readings CRUD
@@ -95,6 +185,19 @@ class DatabaseService {
     return await db.update(
       'pending_readings',
       {'server_id': serverId},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+  
+  Future<int> updateRetryCount(int id, int retryCount) async {
+    final db = await database;
+    return await db.update(
+      'pending_readings',
+      {
+        'retry_count': retryCount,
+        'last_retry_at': DateTime.now().toIso8601String(),
+      },
       where: 'id = ?',
       whereArgs: [id],
     );

@@ -4,6 +4,7 @@ import '../providers/reading_provider.dart';
 import '../models/pump.dart';
 import '../models/reading.dart';
 import '../screens/capture_screen.dart';
+import '../services/format_service.dart';
 import '../theme/app_theme.dart';
 
 class PumpsScreen extends StatefulWidget {
@@ -14,14 +15,28 @@ class PumpsScreen extends StatefulWidget {
 }
 
 class _PumpsScreenState extends State<PumpsScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = context.read<ReadingProvider>();
       if (provider.pumps.isEmpty) provider.loadPumps();
-      provider.loadReadings(); // load today's readings to detect open ones
+      provider.loadReadings();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _refresh() async {
@@ -35,6 +50,11 @@ class _PumpsScreenState extends State<PumpsScreen> {
   @override
   Widget build(BuildContext context) {
     final reading = context.watch<ReadingProvider>();
+    
+    final filteredPumps = reading.pumps.where((pump) {
+      return pump.name.toLowerCase().contains(_searchQuery) ||
+             pump.productType.toLowerCase().contains(_searchQuery);
+    }).toList();
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -42,49 +62,71 @@ class _PumpsScreenState extends State<PumpsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Header ────────────────────────────────
+            // ── Header ───────────────────────────
             Padding(
-               padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-              child: Row(
+              padding: AppSpacing.pagePadding,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Pumps',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary,
-                          ),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Pumps',
+                              style: TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.w900,
+                                color: AppColors.textPrimary,
+                                letterSpacing: -1,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'SELECT UNIT FOR LOGGING',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.primary,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ],
                         ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Tap a pump to capture a reading',
-                          style:
-                              TextStyle(fontSize: 13, color: AppColors.textMuted),
-                        ),
-                      ],
-                    ),
+                      ),
+                      _HeaderAction(
+                        icon: Icons.refresh_rounded,
+                        onTap: _refresh,
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    onPressed: _refresh,
-                    icon: const Icon(Icons.refresh_outlined,
-                        color: AppColors.textSecondary),
+                  const SizedBox(height: 20),
+                  // ── Search Bar ─────────────────────
+                  TextField(
+                    controller: _searchController,
+                    style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                    decoration: InputDecoration(
+                      hintText: 'Search pump name or type...',
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.close_rounded, size: 18),
+                              onPressed: () => _searchController.clear(),
+                            )
+                          : null,
+                    ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 12),
-
             // ── Pump List ─────────────────────────────
             Expanded(
               child: reading.isLoading && reading.pumps.isEmpty
                   ? const Center(
-                      child: CircularProgressIndicator(
-                          color: AppColors.primary),
+                      child: CircularProgressIndicator(color: AppColors.primary),
                     )
                   : reading.pumps.isEmpty
                       ? _buildEmptyState()
@@ -92,25 +134,24 @@ class _PumpsScreenState extends State<PumpsScreen> {
                           color: AppColors.primary,
                           backgroundColor: AppColors.surface,
                           onRefresh: _refresh,
-                          child: ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            itemCount: reading.pumps.length,
-                            itemBuilder: (context, index) {
-                              final pump = reading.pumps[index];
-                              final openReading =
-                                  reading.getOpenReadingForPump(pump.id);
-                              final closedCount = reading.readings
-                                  .where((r) =>
-                                      r.pumpId == pump.id && !r.isOpen)
-                                  .length;
+                          child: filteredPumps.isEmpty
+                              ? _buildNoResultsState()
+                              : ListView.builder(
+                                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                                  physics: const BouncingScrollPhysics(),
+                                  itemCount: filteredPumps.length,
+                                  itemBuilder: (context, index) {
+                                    final pump = filteredPumps[index];
+                                    final openReading = reading.getOpenReadingForPump(pump.id);
+                                    final closedCount = reading.readings.where((r) => r.pumpId == pump.id && !r.isOpen).length;
 
-                              return _PumpCard(
-                                pump: pump,
-                                openReading: openReading,
-                                closedReadingsToday: closedCount,
-                              );
-                            },
-                          ),
+                                    return _PumpCard(
+                                      pump: pump,
+                                      openReading: openReading,
+                                      closedReadingsToday: closedCount,
+                                    );
+                                  },
+                                ),
                         ),
             ),
           ],
@@ -124,36 +165,48 @@ class _PumpsScreenState extends State<PumpsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: const BoxDecoration(
-              color: AppColors.surfaceLight,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.local_gas_station_outlined,
-                size: 40, color: AppColors.textMuted),
-          ),
+          Icon(Icons.ev_station_rounded, size: 48, color: AppColors.surfaceLight),
           const SizedBox(height: 16),
           const Text(
-            'No pumps found',
+            'No Units Detected',
             style: TextStyle(
               fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
             ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Pull down to refresh',
-            style: TextStyle(fontSize: 13, color: AppColors.textMuted),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildNoResultsState() {
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: Container(
+        height: 300,
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.search_off_rounded, size: 48, color: AppColors.surfaceLight),
+            const SizedBox(height: 16),
+            const Text(
+              'No pumps match your search',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Try a different name or fuel type',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-// ── Pump card ───────────────────────────────────────────
 class _PumpCard extends StatelessWidget {
   final Pump pump;
   final Reading? openReading;
@@ -167,163 +220,136 @@ class _PumpCard extends StatelessWidget {
 
   Color get _productColor {
     switch (pump.productType.toUpperCase()) {
-      case 'PMS':
-        return AppColors.warning;
-      case 'AGO':
-        return AppColors.success;
-      case 'DPK':
-        return AppColors.info;
-      default:
-        return AppColors.primary;
+      case 'PMS': return AppColors.warning;
+      case 'AGO': return AppColors.success;
+      case 'DPK': return AppColors.info;
+      default: return AppColors.primary;
     }
   }
 
-  bool get _needsClosing => openReading != null;
-
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () async {
-        final result = await Navigator.of(context).pushNamed(
-          '/capture',
-          arguments: CaptureArgs(
-            pump: pump,
-            openReading: openReading,
-          ),
-        );
-        // Refresh readings when coming back
-        if (result == true && context.mounted) {
-          context.read<ReadingProvider>().loadReadings();
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-        ),
-        child: Row(
-          children: [
-            // Product color indicator
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: _productColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(AppRadius.md),
-              ),
-              child: Icon(
-                Icons.local_gas_station_rounded,
-                color: _productColor,
-                size: 22,
-              ),
-            ),
-            const SizedBox(width: 14),
-
-            // Info
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () async {
+              final result = await Navigator.of(context).pushNamed(
+                '/capture',
+                arguments: CaptureArgs(pump: pump, openReading: openReading),
+              );
+              if (result == true && context.mounted) {
+                context.read<ReadingProvider>().loadReadings();
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
                 children: [
-                  Text(
-                    pump.name,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: _productColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.local_gas_station_rounded, color: _productColor, size: 24),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          pump.name,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Text(
+                              pump.productType,
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: _productColor, letterSpacing: 0.5),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${FormatService.formatCurrency(pump.currentPrice)}/L',
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textMuted),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Row(
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(
-                        pump.productType,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: _productColor,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '₦${pump.currentPrice.toStringAsFixed(0)}/L',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
+                      if (openReading != null)
+                        _StatusChip(label: 'OPEN', color: AppColors.warning)
+                      else if (closedReadingsToday > 0)
+                        _StatusChip(label: 'DONE', color: AppColors.success)
+                      else
+                        _StatusChip(label: 'PENDING', color: AppColors.textMuted),
+                      const SizedBox(height: 8),
+                      const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textMuted),
                     ],
                   ),
                 ],
               ),
             ),
-
-            // Status badge
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (_needsClosing)
-                  // Orange badge — needs closing
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                    ),
-                    child: const Text(
-                      'Needs closing',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.warning,
-                      ),
-                    ),
-                  )
-                else if (closedReadingsToday > 0)
-                  // Green badge — done
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.success.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                    ),
-                    child: Text(
-                      '$closedReadingsToday done',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.success,
-                      ),
-                    ),
-                  )
-                else
-                  // Grey/warning badge — not read
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                    ),
-                    child: const Text(
-                      'Not read',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.warning,
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 6),
-                const Icon(Icons.chevron_right,
-                    size: 18, color: AppColors.textMuted),
-              ],
-            ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _StatusChip({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(100),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: color, letterSpacing: 0.5),
+      ),
+    );
+  }
+}
+
+class _HeaderAction extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _HeaderAction({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: AppColors.textPrimary, size: 20),
       ),
     );
   }

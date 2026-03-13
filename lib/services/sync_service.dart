@@ -51,12 +51,14 @@ class SyncService extends ChangeNotifier {
     required int pumpId,
     String? pumpName,
     required double openingReading,
-    required double closingReading,
+    double? closingReading,
     required DateTime date,
     required String shift,
     String? notes,
     File? openingImage,
     File? closingImage,
+    int? serverId,
+    bool isClosingOnly = false,
   }) async {
     try {
       await _databaseService.insertPendingReading({
@@ -71,11 +73,12 @@ class SyncService extends ChangeNotifier {
         'closing_image_path': closingImage?.path,
         'created_at': DateTime.now().toIso8601String(),
         'sync_status': 'pending',
+        'server_id': serverId,
+        'is_closing_only': isClosingOnly ? 1 : 0,
       });
 
       await _updatePendingCount();
 
-      // Try to sync immediately if online
       if (_connectivityService.isConnected) {
         syncPendingReadings();
       }
@@ -101,63 +104,68 @@ class SyncService extends ChangeNotifier {
 
       for (final reading in pendingReadings) {
         try {
-          // Mark as syncing
           await _databaseService.updatePendingReadingStatus(
             reading['id'] as int,
             'syncing',
           );
 
-          // Check if we already have a server ID from a previous partial sync
           int? serverId = reading['server_id'] as int?;
+          final isClosingOnly = reading['is_closing_only'] == 1;
           
-          if (serverId == null) {
-            // Create the reading via API
+          if (serverId == null && !isClosingOnly) {
+            // Create new reading
             final createdReading = await _apiService.createReading(
               pumpId: reading['pump_id'] as int,
               openingReading: reading['opening_reading'] as double,
-              closingReading: reading['closing_reading'] as double,
+              closingReading: reading['closing_reading'] as double?,
               date: DateTime.parse(reading['date'] as String),
               shift: reading['shift'] as String,
               notes: reading['notes'] as String?,
             );
             
             serverId = createdReading.id;
-            
-            // Save the server ID locally so we don't create duplicates on retry
             await _databaseService.updatePendingReadingServerId(
               reading['id'] as int,
               serverId,
             );
+          } else if (serverId != null && isClosingOnly) {
+            // Update existing reading (Closing)
+            await _apiService.updateReading(
+              readingId: serverId,
+              closingReading: reading['closing_reading'] as double,
+              notes: reading['notes'] as String?,
+            );
           }
 
           // Upload images if available
-          final openingImagePath = reading['opening_image_path'] as String?;
-          if (openingImagePath != null && openingImagePath.isNotEmpty) {
-            final file = File(openingImagePath);
-            if (await file.exists()) {
-              await _apiService.uploadImage(
-                file: file,
-                category: 'opening_reading',
-                uploadableId: serverId,
-                uploadableType: 'App\\Models\\Reading',
-              );
+          if (serverId != null) {
+            final openingImagePath = reading['opening_image_path'] as String?;
+            if (openingImagePath != null && openingImagePath.isNotEmpty) {
+              final file = File(openingImagePath);
+              if (await file.exists()) {
+                await _apiService.uploadImage(
+                  file: file,
+                  category: 'opening_reading',
+                  uploadableId: serverId,
+                  uploadableType: 'App\\Models\\Reading',
+                );
+              }
+            }
+
+            final closingImagePath = reading['closing_image_path'] as String?;
+            if (closingImagePath != null && closingImagePath.isNotEmpty) {
+              final file = File(closingImagePath);
+              if (await file.exists()) {
+                await _apiService.uploadImage(
+                  file: file,
+                  category: 'closing_reading',
+                  uploadableId: serverId,
+                  uploadableType: 'App\\Models\\Reading',
+                );
+              }
             }
           }
 
-          final closingImagePath = reading['closing_image_path'] as String?;
-          if (closingImagePath != null && closingImagePath.isNotEmpty) {
-            final file = File(closingImagePath);
-            if (await file.exists()) {
-              await _apiService.uploadImage(
-                file: file,
-                category: 'closing_reading',
-                uploadableId: serverId,
-                uploadableType: 'App\\Models\\Reading',
-              );
-            }
-          }
-
-          // Mark as synced
           await _databaseService.updatePendingReadingStatus(
             reading['id'] as int,
             'synced',
@@ -171,13 +179,12 @@ class SyncService extends ChangeNotifier {
         } catch (e) {
           await _databaseService.updatePendingReadingStatus(
             reading['id'] as int,
-            'pending', // Keep as pending to retry later
+            'pending',
             errorMessage: e.toString(),
           );
         }
       }
 
-      // Clean up synced readings
       await _databaseService.clearSyncedReadings();
     } catch (e) {
       _lastError = 'Sync failed: $e';

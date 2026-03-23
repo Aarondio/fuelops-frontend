@@ -128,7 +128,7 @@ class _PendingScreenState extends State<PendingScreen> {
                               onDismissed: (_) async {
                                 final syncService = context.read<SyncService>();
                                 await syncService.deletePending(id);
-                                _loadPending();
+                                _loadPendingReadings();
                               },
                               child: _buildPendingCard(reading),
                             );

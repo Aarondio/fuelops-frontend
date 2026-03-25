@@ -241,6 +241,18 @@ class _PumpCard extends StatelessWidget {
           color: Colors.transparent,
           child: InkWell(
             onTap: () async {
+              if (closedReadingsToday >= 2 && openReading == null) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Pump is fully logged for today.'),
+                      backgroundColor: AppColors.warning,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+                return;
+              }
               final result = await Navigator.of(context).pushNamed(
                 '/capture',
                 arguments: CaptureArgs(pump: pump, openReading: openReading),
@@ -288,19 +300,21 @@ class _PumpCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (openReading != null)
-                        _StatusChip(label: 'OPEN', color: AppColors.warning)
-                      else if (closedReadingsToday > 0)
-                        _StatusChip(label: 'DONE', color: AppColors.success)
-                      else
-                        _StatusChip(label: 'PENDING', color: AppColors.textMuted),
-                      const SizedBox(height: 8),
-                      const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textMuted),
-                    ],
-                  ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (openReading != null)
+                          const _StatusChip(label: 'OPEN', color: AppColors.warning)
+                        else if (closedReadingsToday >= 2)
+                          const _StatusChip(label: 'FULLY LOGGED', color: AppColors.success)
+                        else if (closedReadingsToday > 0)
+                          const _StatusChip(label: 'DONE', color: AppColors.success)
+                        else
+                          const _StatusChip(label: 'PENDING', color: AppColors.textMuted),
+                        const SizedBox(height: 8),
+                        const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textMuted),
+                      ],
+                    ),
                 ],
               ),
             ),

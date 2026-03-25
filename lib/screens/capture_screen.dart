@@ -141,6 +141,20 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    
+    if (!_isClosingMode) {
+      final readingProvider = context.read<ReadingProvider>();
+      final completedShifts = readingProvider.readings
+          .where((r) => r.pumpId == _pump?.id && DateUtils.isSameDay(r.date, DateTime.now()))
+          .map((r) => r.shift.toLowerCase())
+          .toList();
+          
+      if (completedShifts.contains(_selectedShift)) {
+        _showSnack('SHIFT RECORD ALREADY EXISTS FOR TODAY', AppColors.warning);
+        return;
+      }
+    }
+
     setState(() => _isSubmitting = true);
     bool success;
     if (_isClosingMode) {
@@ -246,21 +260,42 @@ class _CaptureScreenState extends State<CaptureScreen> {
   }
 
   Widget _buildShiftSelector() {
+    final readingProvider = context.read<ReadingProvider>();
+    final completedShifts = readingProvider.readings
+        .where((r) => r.pumpId == _pump?.id && DateUtils.isSameDay(r.date, DateTime.now()))
+        .map((r) => r.shift.toLowerCase())
+        .toList();
+
     return Row(
       children: AppConfig.shifts.map((s) {
-        final active = _selectedShift == s.name.toLowerCase();
+        final shiftName = s.name.toLowerCase();
+        final active = _selectedShift == shiftName;
+        final isCompleted = completedShifts.contains(shiftName);
+
         return Expanded(
           child: GestureDetector(
-            onTap: () => setState(() => _selectedShift = s.name.toLowerCase()),
+            onTap: isCompleted ? null : () => setState(() => _selectedShift = shiftName),
             child: Container(
               margin: EdgeInsets.only(right: s == AppConfig.shifts.last ? 0 : 8),
               padding: const EdgeInsets.symmetric(vertical: 10),
               decoration: BoxDecoration(
-                color: active ? AppColors.primary.withValues(alpha: 0.1) : AppColors.surface,
+                color: active 
+                    ? AppColors.primary.withValues(alpha: 0.1) 
+                    : isCompleted 
+                        ? AppColors.surfaceLight.withValues(alpha: 0.5)
+                        : AppColors.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Center(
-                child: Text(s.name.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: active ? AppColors.primary : AppColors.textMuted)),
+                child: Text(
+                  s.name.toUpperCase(), 
+                  style: TextStyle(
+                    fontSize: 10, 
+                    fontWeight: FontWeight.w900, 
+                    color: active ? AppColors.primary : (isCompleted ? AppColors.textMuted.withValues(alpha: 0.5) : AppColors.textMuted),
+                    decoration: isCompleted ? TextDecoration.lineThrough : null,
+                  ),
+                ),
               ),
             ),
           ),

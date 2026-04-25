@@ -32,13 +32,9 @@ class SyncService extends ChangeNotifier {
 
   void _init() {
     _updatePendingCount();
-
-    // Listen for connectivity changes
     _connectivitySubscription =
         _connectivityService.connectionStatus.listen((isConnected) {
-      if (isConnected) {
-        syncPendingReadings();
-      }
+      if (isConnected) syncPendingReadings();
     });
   }
 
@@ -52,6 +48,10 @@ class SyncService extends ChangeNotifier {
     String? pumpName,
     required double openingReading,
     double? closingReading,
+    double? declaredLitresSold,
+    double? declaredCashCollected,
+    int? attendantId,
+    double? ocrConfidence,
     required DateTime date,
     required String shift,
     String? notes,
@@ -66,6 +66,10 @@ class SyncService extends ChangeNotifier {
         'pump_name': pumpName,
         'opening_reading': openingReading,
         'closing_reading': closingReading,
+        'declared_litres_sold': declaredLitresSold,
+        'declared_cash_collected': declaredCashCollected,
+        'attendant_id': attendantId,
+        'ocr_confidence': ocrConfidence,
         'date': date.toIso8601String().split('T')[0],
         'shift': shift,
         'notes': notes,
@@ -79,9 +83,7 @@ class SyncService extends ChangeNotifier {
 
       await _updatePendingCount();
 
-      if (_connectivityService.isConnected) {
-        syncPendingReadings();
-      }
+      if (_connectivityService.isConnected) syncPendingReadings();
 
       return true;
     } catch (e) {
@@ -104,16 +106,12 @@ class SyncService extends ChangeNotifier {
 
       for (final reading in pendingReadings) {
         try {
-          await _databaseService.updatePendingReadingStatus(
-            reading['id'] as int,
-            'syncing',
-          );
+          await _databaseService.updatePendingReadingStatus(reading['id'] as int, 'syncing');
 
           int? serverId = reading['server_id'] as int?;
           final isClosingOnly = reading['is_closing_only'] == 1;
-          
+
           if (serverId == null && !isClosingOnly) {
-            // Create new reading
             final createdReading = await _apiService.createReading(
               pumpId: reading['pump_id'] as int,
               openingReading: reading['opening_reading'] as double,
@@ -121,23 +119,35 @@ class SyncService extends ChangeNotifier {
               date: DateTime.parse(reading['date'] as String),
               shift: reading['shift'] as String,
               notes: reading['notes'] as String?,
+              attendantId: reading['attendant_id'] as int?,
+              ocrConfidence: reading['ocr_confidence'] as double?,
             );
-            
             serverId = createdReading.id;
-            await _databaseService.updatePendingReadingServerId(
-              reading['id'] as int,
-              serverId,
-            );
+            await _databaseService.updatePendingReadingServerId(reading['id'] as int, serverId);
           } else if (serverId != null && isClosingOnly) {
-            // Update existing reading (Closing)
-            await _apiService.updateReading(
-              readingId: serverId,
-              closingReading: reading['closing_reading'] as double,
-              notes: reading['notes'] as String?,
-            );
+            final closingReading = reading['closing_reading'] as double?;
+            final declaredLitres = reading['declared_litres_sold'] as double?;
+            final declaredCash = reading['declared_cash_collected'] as double?;
+
+            if (closingReading != null && declaredLitres != null && declaredCash != null) {
+              await _apiService.closeReading(
+                readingId: serverId,
+                closingReading: closingReading,
+                declaredLitresSold: declaredLitres,
+                declaredCashCollected: declaredCash,
+                notes: reading['notes'] as String?,
+                ocrConfidence: reading['ocr_confidence'] as double?,
+              );
+            } else {
+              // Fallback for legacy offline closings without declared fields
+              await _apiService.updateReading(
+                readingId: serverId,
+                closingReading: closingReading,
+                notes: reading['notes'] as String?,
+              );
+            }
           }
 
-          // Upload images if available
           if (serverId != null) {
             final openingImagePath = reading['opening_image_path'] as String?;
             if (openingImagePath != null && openingImagePath.isNotEmpty) {
@@ -166,10 +176,7 @@ class SyncService extends ChangeNotifier {
             }
           }
 
-          await _databaseService.updatePendingReadingStatus(
-            reading['id'] as int,
-            'synced',
-          );
+          await _databaseService.updatePendingReadingStatus(reading['id'] as int, 'synced');
         } on ApiException catch (e) {
           await _databaseService.updatePendingReadingStatus(
             reading['id'] as int,

@@ -23,9 +23,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   void initState() {
     super.initState();
     _searchController.addListener(() {
-      setState(() {
-        _searchQuery = _searchController.text.toLowerCase();
-      });
+      setState(() => _searchQuery = _searchController.text.toLowerCase());
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ReadingProvider>().loadReadings(date: _selectedDate);
@@ -60,7 +58,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
             dialogTheme: DialogThemeData(
               backgroundColor: AppColors.surface,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.lg)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.lg)),
             ),
           ),
           child: child!,
@@ -71,9 +70,38 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (date != null && date != _selectedDate && mounted) {
       setState(() {
         _selectedDate = date;
-        _searchController.clear(); // Reset search when date changes
+        _searchController.clear();
       });
       context.read<ReadingProvider>().loadReadings(date: date);
+    }
+  }
+
+  Future<void> _handleConfirmHandover(BuildContext context, int readingId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Confirm Handover',
+            style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
+        content: const Text(
+            'Confirm that this shift has been properly handed over?',
+            style: TextStyle(color: AppColors.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.textMuted)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await context.read<ReadingProvider>().confirmHandover(readingId);
     }
   }
 
@@ -98,8 +126,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ── Header ───────────────────────────
+            // Header
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
               child: Row(
@@ -129,10 +158,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ],
                     ),
                   ),
-                  _HeaderAction(
-                    icon: Icons.calendar_month_rounded,
-                    onTap: _selectDate,
-                  ),
+                  _HeaderAction(icon: Icons.calendar_month_rounded, onTap: _selectDate),
                   const SizedBox(width: 10),
                   _HeaderAction(
                     icon: Icons.refresh_rounded,
@@ -142,7 +168,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ),
 
-            // ── Horizontal Date Scroller ──────────
+            // Horizontal Date Scroller
             _HorizontalDateScroller(
               scrollController: _dateScrollController,
               selectedDate: _selectedDate,
@@ -155,7 +181,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               },
             ),
 
-            // ── Search Bar ─────────────────────
+            // Search Bar
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
               child: TextField(
@@ -174,7 +200,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ),
 
-            // ── Summary Metrics ──────────────────
+            // Summary Metrics
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Row(
@@ -190,7 +216,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   Expanded(
                     child: _CompactStat(
                       label: 'TOTAL VOLUME',
-                      value: '${FormatService.formatDecimal(readingProvider.readings.fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)))}L',
+                      value:
+                          '${FormatService.formatDecimal(readingProvider.readings.fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)))}L',
                       icon: Icons.water_drop_rounded,
                       color: AppColors.success,
                     ),
@@ -199,14 +226,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ),
 
-            // ── Logs List ────────────────────────
+            // Logs List
             Expanded(
               child: RefreshIndicator(
                 color: AppColors.primary,
                 backgroundColor: AppColors.surface,
                 onRefresh: () => readingProvider.loadReadings(date: _selectedDate),
                 child: readingProvider.isLoading
-                    ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                    ? const Center(
+                        child: CircularProgressIndicator(color: AppColors.primary))
                     : filteredReadings.isEmpty
                         ? _buildEmptyState()
                         : ListView.builder(
@@ -220,8 +248,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                 shift: reading.shift,
                                 openingReading: reading.openingReading,
                                 closingReading: reading.closingReading,
+                                volumeSold: reading.volumeSold,
                                 time: DateFormat('HH:mm').format(reading.createdAt),
                                 notes: reading.notes,
+                                varianceStatus: reading.varianceStatus,
+                                revenueVariance: reading.revenueVariance,
+                                ocrConfidence: reading.ocrConfidence,
+                                lowConfidenceFlag: reading.lowConfidenceFlag,
+                                needsHandover: reading.needsHandover,
+                                onConfirmHandover: reading.needsHandover
+                                    ? () => _handleConfirmHandover(context, reading.id)
+                                    : null,
                               );
                             },
                           ),
@@ -251,7 +288,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
             const SizedBox(height: 16),
             Text(
               isFiltering ? 'No matching records' : 'No records found for this date',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
+              style: const TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
             ),
             const SizedBox(height: 4),
             Text(
@@ -264,8 +302,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 }
-
-// ── Custom Widgets ──────────────────────────────────
 
 class _HorizontalDateScroller extends StatelessWidget {
   final ScrollController scrollController;
@@ -280,10 +316,9 @@ class _HorizontalDateScroller extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Generate last 14 days
-    final dates = List.generate(14, (index) => 
-      DateTime.now().subtract(Duration(days: index))
-    ).reversed.toList();
+    final dates = List.generate(14, (index) => DateTime.now().subtract(Duration(days: index)))
+        .reversed
+        .toList();
 
     return SizedBox(
       height: 80,
@@ -412,10 +447,7 @@ class _HeaderAction extends StatelessWidget {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(10),
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          shape: BoxShape.circle,
-        ),
+        decoration: const BoxDecoration(color: AppColors.surface, shape: BoxShape.circle),
         child: Icon(icon, color: AppColors.textPrimary, size: 20),
       ),
     );

@@ -16,7 +16,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -30,6 +30,10 @@ class DatabaseService {
         pump_name TEXT,
         opening_reading REAL NOT NULL,
         closing_reading REAL,
+        declared_litres_sold REAL,
+        declared_cash_collected REAL,
+        attendant_id INTEGER,
+        ocr_confidence REAL,
         date TEXT NOT NULL,
         shift TEXT NOT NULL,
         notes TEXT,
@@ -60,12 +64,16 @@ class DatabaseService {
         id INTEGER PRIMARY KEY,
         pump_id INTEGER NOT NULL,
         pump_name TEXT,
+        attendant_id INTEGER,
         opening_reading REAL NOT NULL,
         closing_reading REAL,
         volume_sold REAL,
+        variance_status TEXT,
+        revenue_variance REAL,
+        handover_confirmed_at TEXT,
         date TEXT NOT NULL,
         shift TEXT NOT NULL,
-        is_open INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'open',
         created_at TEXT NOT NULL
       )
     ''');
@@ -82,7 +90,7 @@ class DatabaseService {
     if (oldVersion < 4) {
       await db.execute('ALTER TABLE pending_readings ADD COLUMN is_closing_only INTEGER DEFAULT 0');
       await db.execute('''
-        CREATE TABLE cached_pumps (
+        CREATE TABLE IF NOT EXISTS cached_pumps (
           id INTEGER PRIMARY KEY,
           name TEXT NOT NULL,
           product_type TEXT NOT NULL,
@@ -91,7 +99,7 @@ class DatabaseService {
         )
       ''');
       await db.execute('''
-        CREATE TABLE cached_readings (
+        CREATE TABLE IF NOT EXISTS cached_readings (
           id INTEGER PRIMARY KEY,
           pump_id INTEGER NOT NULL,
           pump_name TEXT,
@@ -105,9 +113,26 @@ class DatabaseService {
         )
       ''');
     }
+    if (oldVersion < 5) {
+      await db.execute('ALTER TABLE pending_readings ADD COLUMN declared_litres_sold REAL');
+      await db.execute('ALTER TABLE pending_readings ADD COLUMN declared_cash_collected REAL');
+      await db.execute('ALTER TABLE pending_readings ADD COLUMN attendant_id INTEGER');
+      await db.execute('ALTER TABLE pending_readings ADD COLUMN ocr_confidence REAL');
+      // Upgrade cached_readings to include v1.2 fields
+      try {
+        await db.execute('ALTER TABLE cached_readings ADD COLUMN attendant_id INTEGER');
+        await db.execute('ALTER TABLE cached_readings ADD COLUMN variance_status TEXT');
+        await db.execute('ALTER TABLE cached_readings ADD COLUMN revenue_variance REAL');
+        await db.execute('ALTER TABLE cached_readings ADD COLUMN handover_confirmed_at TEXT');
+        await db.execute('ALTER TABLE cached_readings ADD COLUMN status TEXT DEFAULT \'open\'');
+      } catch (_) {
+        // Columns may already exist; ignore
+      }
+    }
   }
 
   // Pumps Cache
+
   Future<void> cachePumps(List<Map<String, dynamic>> pumps) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -124,6 +149,7 @@ class DatabaseService {
   }
 
   // Readings Cache
+
   Future<void> cacheReadings(List<Map<String, dynamic>> readings) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -140,6 +166,7 @@ class DatabaseService {
   }
 
   // Pending Readings CRUD
+
   Future<int> insertPendingReading(Map<String, dynamic> reading) async {
     final db = await database;
     return await db.insert('pending_readings', reading);
@@ -157,10 +184,7 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getAllPendingReadings() async {
     final db = await database;
-    return await db.query(
-      'pending_readings',
-      orderBy: 'created_at DESC',
-    );
+    return await db.query('pending_readings', orderBy: 'created_at DESC');
   }
 
   Future<int> updatePendingReadingStatus(
@@ -171,10 +195,7 @@ class DatabaseService {
     final db = await database;
     return await db.update(
       'pending_readings',
-      {
-        'sync_status': status,
-        'error_message': errorMessage,
-      },
+      {'sync_status': status, 'error_message': errorMessage},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -189,15 +210,12 @@ class DatabaseService {
       whereArgs: [id],
     );
   }
-  
+
   Future<int> updateRetryCount(int id, int retryCount) async {
     final db = await database;
     return await db.update(
       'pending_readings',
-      {
-        'retry_count': retryCount,
-        'last_retry_at': DateTime.now().toIso8601String(),
-      },
+      {'retry_count': retryCount, 'last_retry_at': DateTime.now().toIso8601String()},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -205,11 +223,7 @@ class DatabaseService {
 
   Future<int> deletePendingReading(int id) async {
     final db = await database;
-    return await db.delete(
-      'pending_readings',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    return await db.delete('pending_readings', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<int> getPendingCount() async {
@@ -223,10 +237,6 @@ class DatabaseService {
 
   Future<void> clearSyncedReadings() async {
     final db = await database;
-    await db.delete(
-      'pending_readings',
-      where: 'sync_status = ?',
-      whereArgs: ['synced'],
-    );
+    await db.delete('pending_readings', where: 'sync_status = ?', whereArgs: ['synced']);
   }
 }

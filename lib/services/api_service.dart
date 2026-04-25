@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../models/attendant.dart';
 import '../models/user.dart';
 import '../models/pump.dart';
 import '../models/reading.dart';
@@ -34,7 +35,6 @@ class ApiService {
   bool _isRefreshing = false;
   Completer<bool>? _refreshCompleter;
 
-  // Callback to notify when auth expires and refresh fails
   Function()? onAuthExpired;
 
   Future<String?> get token => _storage.read(key: 'auth_token');
@@ -59,22 +59,17 @@ class ApiService {
     http.Response response, {
     bool allowRefresh = true,
   }) async {
-    // Handle 401 Unauthorized - try to refresh token
     if (response.statusCode == 401 && allowRefresh) {
       final refreshed = await _refreshToken();
       if (!refreshed) {
         onAuthExpired?.call();
         throw AuthExpiredException();
       }
-      // Token was refreshed, but we need to retry the request
-      // Throw a special exception to signal retry
       throw _RetryException();
     }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      if (response.body.isEmpty) {
-        return {};
-      }
+      if (response.body.isEmpty) return {};
       return json.decode(response.body) as Map<String, dynamic>;
     }
 
@@ -91,9 +86,7 @@ class ApiService {
     );
   }
 
-  /// Refresh the authentication token
   Future<bool> _refreshToken() async {
-    // If already refreshing, wait for the result
     if (_isRefreshing) {
       return _refreshCompleter?.future ?? Future.value(false);
     }
@@ -137,21 +130,17 @@ class ApiService {
     }
   }
 
-  /// Wrapper for GET requests with automatic token refresh
   Future<http.Response> _get(Uri uri, {int retryCount = 0}) async {
     try {
       final response = await http.get(uri, headers: await _headers());
-      await _handleResponse(response); // This will throw _RetryException if refresh needed
+      await _handleResponse(response);
       return response;
     } on _RetryException {
-      if (retryCount < 1) {
-        return _get(uri, retryCount: retryCount + 1);
-      }
+      if (retryCount < 1) return _get(uri, retryCount: retryCount + 1);
       rethrow;
     }
   }
 
-  /// Wrapper for POST requests with automatic token refresh
   Future<http.Response> _post(
     Uri uri, {
     Object? body,
@@ -164,7 +153,7 @@ class ApiService {
         headers: await _headers(withAuth: withAuth),
         body: body != null ? json.encode(body) : null,
       );
-      await _handleResponse(response); // This will throw _RetryException if refresh needed
+      await _handleResponse(response);
       return response;
     } on _RetryException {
       if (retryCount < 1) {
@@ -197,6 +186,7 @@ class ApiService {
   }
 
   // Auth
+
   Future<User> login(String email, String password) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/login'),
@@ -213,10 +203,7 @@ class ApiService {
 
   Future<void> logout() async {
     try {
-      await http.post(
-        Uri.parse('$_baseUrl/logout'),
-        headers: await _headers(),
-      );
+      await http.post(Uri.parse('$_baseUrl/logout'), headers: await _headers());
     } finally {
       await _storage.delete(key: 'auth_token');
     }
@@ -227,32 +214,36 @@ class ApiService {
     return authToken != null;
   }
 
-  /// Fetch the authenticated user's profile from the server
   Future<User> getProfile() async {
     final response = await _get(Uri.parse('$_baseUrl/profile'));
-
     final data = json.decode(response.body) as Map<String, dynamic>;
     return User.fromJson(data['data'] as Map<String, dynamic>);
   }
 
-  /// Manually refresh the token (can be called proactively)
-  Future<bool> refreshToken() async {
-    return _refreshToken();
+  Future<bool> refreshToken() async => _refreshToken();
+
+  // Attendants
+
+  Future<List<Attendant>> getAttendants() async {
+    final response = await _get(Uri.parse('$_baseUrl/attendants'));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return (data['data'] as List)
+        .map((j) => Attendant.fromJson(j as Map<String, dynamic>))
+        .toList();
   }
 
   // Pumps
+
   Future<List<Pump>> getPumps() async {
     final response = await _get(Uri.parse('$_baseUrl/pumps'));
-
     final data = json.decode(response.body) as Map<String, dynamic>;
-    final pumps = (data['data'] as List)
+    return (data['data'] as List)
         .map((j) => Pump.fromJson(j as Map<String, dynamic>))
         .toList();
-
-    return pumps;
   }
 
   // Readings
+
   Future<List<Reading>> getReadings({DateTime? date}) async {
     var uri = Uri.parse('$_baseUrl/readings');
     if (date != null) {
@@ -260,15 +251,11 @@ class ApiService {
         'date': date.toIso8601String().split('T')[0],
       });
     }
-
     final response = await _get(uri);
-
     final data = json.decode(response.body) as Map<String, dynamic>;
-    final readings = (data['data'] as List)
+    return (data['data'] as List)
         .map((j) => Reading.fromJson(j as Map<String, dynamic>))
         .toList();
-
-    return readings;
   }
 
   Future<Reading> createReading({
@@ -278,6 +265,8 @@ class ApiService {
     required DateTime date,
     required String shift,
     String? notes,
+    int? attendantId,
+    double? ocrConfidence,
   }) async {
     final body = <String, dynamic>{
       'pumpId': pumpId,
@@ -286,15 +275,11 @@ class ApiService {
       'shift': shift,
       'notes': notes,
     };
-    if (closingReading != null) {
-      body['closingReading'] = closingReading;
-    }
+    if (closingReading != null) body['closingReading'] = closingReading;
+    if (attendantId != null) body['attendantId'] = attendantId;
+    if (ocrConfidence != null) body['ocrConfidence'] = ocrConfidence;
 
-    final response = await _post(
-      Uri.parse('$_baseUrl/readings'),
-      body: body,
-    );
-
+    final response = await _post(Uri.parse('$_baseUrl/readings'), body: body);
     final data = json.decode(response.body) as Map<String, dynamic>;
     return Reading.fromJson(data['data'] as Map<String, dynamic>);
   }
@@ -303,16 +288,46 @@ class ApiService {
     required int readingId,
     double? closingReading,
     String? notes,
+    double? ocrConfidence,
   }) async {
     final body = <String, dynamic>{};
     if (closingReading != null) body['closingReading'] = closingReading;
     if (notes != null) body['notes'] = notes;
+    if (ocrConfidence != null) body['ocrConfidence'] = ocrConfidence;
 
-    final response = await _put(
-      Uri.parse('$_baseUrl/readings/$readingId'),
+    final response = await _put(Uri.parse('$_baseUrl/readings/$readingId'), body: body);
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return Reading.fromJson(data['data'] as Map<String, dynamic>);
+  }
+
+  Future<Reading> closeReading({
+    required int readingId,
+    required double closingReading,
+    required double declaredLitresSold,
+    required double declaredCashCollected,
+    String? notes,
+    double? ocrConfidence,
+  }) async {
+    final body = <String, dynamic>{
+      'closingReading': closingReading,
+      'declaredLitresSold': declaredLitresSold,
+      'declaredCashCollected': declaredCashCollected,
+    };
+    if (notes != null) body['notes'] = notes;
+    if (ocrConfidence != null) body['ocrConfidence'] = ocrConfidence;
+
+    final response = await _post(
+      Uri.parse('$_baseUrl/readings/$readingId/close'),
       body: body,
     );
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return Reading.fromJson(data['data'] as Map<String, dynamic>);
+  }
 
+  Future<Reading> confirmHandover(int readingId) async {
+    final response = await _post(
+      Uri.parse('$_baseUrl/readings/$readingId/confirm-handover'),
+    );
     final data = json.decode(response.body) as Map<String, dynamic>;
     return Reading.fromJson(data['data'] as Map<String, dynamic>);
   }
@@ -320,27 +335,31 @@ class ApiService {
   // Profile
 
   Future<void> updateProfile({required String name, required String email}) async {
-    await _put(
-      Uri.parse('$_baseUrl/profile'),
-      body: {'name': name, 'email': email},
-    );
+    await _put(Uri.parse('$_baseUrl/profile'), body: {'name': name, 'email': email});
   }
 
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,
   }) async {
-    await _put(
-      Uri.parse('$_baseUrl/profile/password'),
-      body: {
-        'current_password': currentPassword,
-        'password': newPassword,
-        'password_confirmation': newPassword,
-      },
-    );
+    await _put(Uri.parse('$_baseUrl/profile/password'), body: {
+      'current_password': currentPassword,
+      'password': newPassword,
+      'password_confirmation': newPassword,
+    });
+  }
+
+  // Device Health
+
+  Future<void> logDeviceHealth({required String eventType, String? message}) async {
+    await _post(Uri.parse('$_baseUrl/device-health'), body: {
+      'eventType': eventType,
+      if (message != null) 'message': message,
+    });
   }
 
   // Uploads
+
   Future<Map<String, dynamic>> uploadImage({
     required File file,
     required String category,
@@ -356,21 +375,14 @@ class ApiService {
       request.headers['Authorization'] = 'Bearer $authToken';
     }
     request.headers['Accept'] = 'application/json';
-
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
     request.fields['category'] = category;
-
-    if (uploadableId != null) {
-      request.fields['uploadableId'] = uploadableId.toString();
-    }
-    if (uploadableType != null) {
-      request.fields['uploadableType'] = uploadableType;
-    }
+    if (uploadableId != null) request.fields['uploadableId'] = uploadableId.toString();
+    if (uploadableType != null) request.fields['uploadableType'] = uploadableType;
 
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
 
-    // Handle 401 with retry
     if (response.statusCode == 401 && retryCount < 1) {
       final refreshed = await _refreshToken();
       if (refreshed) {
@@ -390,5 +402,4 @@ class ApiService {
   }
 }
 
-/// Internal exception to signal that a request should be retried after token refresh
 class _RetryException implements Exception {}

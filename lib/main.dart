@@ -6,6 +6,7 @@ import 'services/env_config.dart';
 import 'services/api_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/database_service.dart';
+import 'services/device_health_service.dart';
 import 'services/sync_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/app_shell.dart';
@@ -16,10 +17,7 @@ import 'theme/app_theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  const envFile = String.fromEnvironment(
-    'ENV_FILE',
-    defaultValue: '.env',
-  );
+  const envFile = String.fromEnvironment('ENV_FILE', defaultValue: '.env');
   await EnvConfig.load(fileName: envFile);
 
   final apiService = ApiService();
@@ -30,6 +28,12 @@ void main() async {
     databaseService: databaseService,
     connectivityService: connectivityService,
   );
+
+  // DeviceHealthService logs app lifecycle + connectivity events silently
+  final deviceHealthService = DeviceHealthService(apiService);
+  connectivityService.connectionStatus.listen((isConnected) {
+    if (!isConnected) deviceHealthService.logConnectivityDrop();
+  });
 
   final authProvider = AuthProvider(apiService: apiService);
   apiService.onAuthExpired = () {
@@ -115,7 +119,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
       builder: (context, auth, _) {
         switch (auth.status) {
           case AuthStatus.initial:
-          case AuthStatus.loading:
             return Scaffold(
               backgroundColor: AppColors.background,
               body: Center(
@@ -129,17 +132,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
                         shape: BoxShape.circle,
                         color: AppColors.primary,
                       ),
-                      child: const Icon(
-                        Icons.local_gas_station_rounded,
-                        size: 40,
-                        color: Colors.white,
-                      ),
+                      child: const Icon(Icons.local_gas_station_rounded,
+                          size: 40, color: Colors.white),
                     ),
                     const SizedBox(height: 40),
-                    const CircularProgressIndicator(
-                      color: AppColors.primary,
-                      strokeWidth: 3,
-                    ),
+                    const CircularProgressIndicator(color: AppColors.primary, strokeWidth: 3),
                     const SizedBox(height: 24),
                     const Text(
                       'INITIALIZING SYSTEM',
@@ -156,6 +153,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
             );
           case AuthStatus.authenticated:
             return const AppShell();
+          case AuthStatus.loading:
           case AuthStatus.unauthenticated:
             return const LoginScreen();
         }

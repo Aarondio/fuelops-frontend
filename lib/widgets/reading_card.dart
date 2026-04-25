@@ -7,8 +7,15 @@ class ReadingCard extends StatelessWidget {
   final String shift;
   final double openingReading;
   final double? closingReading;
+  final double? volumeSold;
   final String? time;
   final String? notes;
+  final String? varianceStatus;
+  final double? revenueVariance;
+  final double? ocrConfidence;
+  final bool lowConfidenceFlag;
+  final bool needsHandover;
+  final VoidCallback? onConfirmHandover;
   final Widget? trailing;
   final Color? accentColor;
 
@@ -18,15 +25,33 @@ class ReadingCard extends StatelessWidget {
     required this.shift,
     required this.openingReading,
     this.closingReading,
+    this.volumeSold,
     this.time,
     this.notes,
+    this.varianceStatus,
+    this.revenueVariance,
+    this.ocrConfidence,
+    this.lowConfidenceFlag = false,
+    this.needsHandover = false,
+    this.onConfirmHandover,
     this.trailing,
     this.accentColor,
   });
 
   bool get isOpen => closingReading == null;
-  double? get volumeSold =>
-      closingReading != null ? closingReading! - openingReading : null;
+
+  Color _varianceColor() {
+    switch (varianceStatus) {
+      case 'red':
+        return AppColors.error;
+      case 'amber':
+        return AppColors.amber;
+      case 'green':
+        return AppColors.success;
+      default:
+        return AppColors.textMuted;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,11 +76,7 @@ class ReadingCard extends StatelessWidget {
                     color: accent.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(
-                    Icons.local_gas_station_rounded,
-                    color: accent,
-                    size: 18,
-                  ),
+                  child: Icon(Icons.local_gas_station_rounded, color: accent, size: 18),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -85,6 +106,8 @@ class ReadingCard extends StatelessWidget {
                 ),
                 if (isOpen)
                   _StatusPill(label: 'OPEN', color: AppColors.amber)
+                else if (varianceStatus != null && varianceStatus != 'none')
+                  _StatusPill(label: varianceStatus!.toUpperCase(), color: _varianceColor())
                 else if (time != null)
                   Text(
                     time!,
@@ -101,7 +124,7 @@ class ReadingCard extends StatelessWidget {
 
           // Meter values
           Container(
-            margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: AppColors.surfaceLight.withValues(alpha: 0.5),
@@ -110,8 +133,9 @@ class ReadingCard extends StatelessWidget {
             child: Row(
               children: [
                 MeterValue(
-                    label: 'OPENING',
-                    value: FormatService.formatDecimal(openingReading)),
+                  label: 'OPENING',
+                  value: FormatService.formatDecimal(openingReading),
+                ),
                 const SizedBox(width: 12),
                 MeterValue(
                   label: 'CLOSING',
@@ -131,15 +155,11 @@ class ReadingCard extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      volumeSold != null
-                          ? '${FormatService.formatDecimal(volumeSold)} L'
-                          : '—',
+                      volumeSold != null ? '${FormatService.formatDecimal(volumeSold)} L' : '—',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
-                        color: volumeSold != null
-                            ? AppColors.success
-                            : AppColors.textMuted,
+                        color: volumeSold != null ? AppColors.success : AppColors.textMuted,
                       ),
                     ),
                   ],
@@ -148,11 +168,98 @@ class ReadingCard extends StatelessWidget {
             ),
           ),
 
+          // Variance row (closed readings with variance)
+          if (!isOpen && revenueVariance != null && revenueVariance != 0)
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: _varianceColor().withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    revenueVariance! < 0
+                        ? Icons.trending_down_rounded
+                        : Icons.trending_up_rounded,
+                    size: 16,
+                    color: _varianceColor(),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Revenue Variance',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: _varianceColor(),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    FormatService.formatCurrency(revenueVariance!.abs()),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: _varianceColor(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // OCR low confidence indicator
+          if (lowConfidenceFlag || (ocrConfidence != null && ocrConfidence! < 85))
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.visibility_off_rounded, size: 14, color: AppColors.warning),
+                  const SizedBox(width: 8),
+                  Text(
+                    ocrConfidence != null
+                        ? 'Low OCR confidence (${ocrConfidence!.toStringAsFixed(0)}%)'
+                        : 'Low OCR confidence',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.warning,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Handover confirmation button
+          if (needsHandover && onConfirmHandover != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onConfirmHandover,
+                  icon: const Icon(Icons.handshake_rounded, size: 16),
+                  label: const Text('CONFIRM HANDOVER',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: const BorderSide(color: AppColors.primary),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+            ),
+
           // Notes
           if (notes != null && notes!.isNotEmpty)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -169,6 +276,8 @@ class ReadingCard extends StatelessWidget {
                 ),
               ),
             ),
+
+          const SizedBox(height: 16),
         ],
       ),
     );

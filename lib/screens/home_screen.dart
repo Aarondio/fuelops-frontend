@@ -23,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ReadingProvider>().loadPumps();
       context.read<ReadingProvider>().loadReadings();
+      context.read<ReadingProvider>().loadAttendants();
     });
   }
 
@@ -32,6 +33,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final reading = context.watch<ReadingProvider>();
     final sync = context.watch<SyncService>();
     final dateFormat = DateFormat('EEEE, MMMM d');
+
+    final closedReadings = reading.readings.where((r) => r.isClosed).toList();
+    final totalRevenueVariance = closedReadings.fold<double>(
+        0, (sum, r) => sum + (r.revenueVariance ?? 0));
+    final variantShiftsCount =
+        closedReadings.where((r) => r.varianceStatus == 'red' || r.varianceStatus == 'amber').length;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -46,7 +53,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: CustomScrollView(
             physics: const BouncingScrollPhysics(),
             slivers: [
-              // ── Header ───────────────────────────
+              // Header
               SliverPadding(
                 padding: AppSpacing.pagePadding,
                 sliver: SliverToBoxAdapter(
@@ -89,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // ── Offline Banner ───────────────────
+              // Offline Banner
               if (!reading.isOnline)
                 SliverToBoxAdapter(
                   child: Container(
@@ -99,11 +106,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: AppColors.error.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
-                    child: Row(
+                    child: const Row(
                       children: [
-                        const Icon(Icons.cloud_off_rounded, color: AppColors.error, size: 18),
-                        const SizedBox(width: 10),
-                        const Expanded(
+                        Icon(Icons.cloud_off_rounded, color: AppColors.error, size: 18),
+                        SizedBox(width: 10),
+                        Expanded(
                           child: Text(
                             'Offline Mode Active',
                             style: TextStyle(
@@ -117,7 +124,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
-              // ── Error Banner ──────────────────────
+
+              // Error Banner
               if (reading.error != null)
                 SliverToBoxAdapter(
                   child: Container(
@@ -129,7 +137,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
+                        const Icon(Icons.warning_amber_rounded,
+                            color: AppColors.warning, size: 18),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
@@ -150,18 +159,32 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
-              // ── Hero Volume Card ─────────────────
+              // Hero Volume Card
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                   child: _HeroVolumeCard(
-                    volume: reading.readings.fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)),
+                    volume: reading.readings
+                        .fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)),
                     shift: AppConfig.getCurrentShift().name,
                   ),
                 ),
               ),
 
-              // ── Stats Grid ───────────────────────
+              // Variance Summary (only when there are closed shifts today)
+              if (closedReadings.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: _VarianceSummaryCard(
+                      closedShifts: closedReadings.length,
+                      totalRevenueVariance: totalRevenueVariance,
+                      variantShiftsCount: variantShiftsCount,
+                    ),
+                  ),
+                ),
+
+              // Stats Grid
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 sliver: SliverGrid.count(
@@ -187,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // ── Recent Activity ──────────────────
+              // Recent Activity
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
                 sliver: SliverToBoxAdapter(
@@ -204,8 +227,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       TextButton(
                         onPressed: () {
-                          // Navigate to History tab in AppShell
-                          final shellState = context.findAncestorStateOfType<AppShellState>();
+                          final shellState =
+                              context.findAncestorStateOfType<AppShellState>();
                           shellState?.switchToTab(2);
                         },
                         child: const Text('See All', style: TextStyle(fontSize: 13)),
@@ -233,6 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           shift: r.shift,
                           time: DateFormat('HH:mm').format(r.createdAt),
                           isOpen: r.isOpen,
+                          varianceStatus: r.varianceStatus,
                         );
                       },
                       childCount: reading.readings.take(5).length,
@@ -284,11 +308,7 @@ class _HeroVolumeCard extends StatelessWidget {
           const Spacer(),
           const Text(
             'Daily Output',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
+            style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 2),
           Row(
@@ -308,16 +328,97 @@ class _HeroVolumeCard extends StatelessWidget {
                 child: Text(
                   'Litres',
                   style: TextStyle(
-                    color: Colors.white60,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
+                      color: Colors.white60, fontSize: 14, fontWeight: FontWeight.w700),
                 ),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _VarianceSummaryCard extends StatelessWidget {
+  final int closedShifts;
+  final double totalRevenueVariance;
+  final int variantShiftsCount;
+
+  const _VarianceSummaryCard({
+    required this.closedShifts,
+    required this.totalRevenueVariance,
+    required this.variantShiftsCount,
+  });
+
+  Color get _varianceColor {
+    if (totalRevenueVariance < 0 && variantShiftsCount > 0) return AppColors.error;
+    if (totalRevenueVariance < 0) return AppColors.amber;
+    return AppColors.success;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _MiniStat(
+              label: 'CLOSED SHIFTS',
+              value: '$closedShifts',
+              color: AppColors.primary,
+            ),
+          ),
+          Container(width: 1, height: 36, color: AppColors.surfaceLight),
+          Expanded(
+            child: _MiniStat(
+              label: 'REVENUE VARIANCE',
+              value: FormatService.formatCurrency(totalRevenueVariance),
+              color: _varianceColor,
+            ),
+          ),
+          Container(width: 1, height: 36, color: AppColors.surfaceLight),
+          Expanded(
+            child: _MiniStat(
+              label: 'FLAGGED SHIFTS',
+              value: '$variantShiftsCount',
+              color: variantShiftsCount > 0 ? AppColors.warning : AppColors.success,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _MiniStat({required this.label, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: color),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: const TextStyle(
+              fontSize: 8, fontWeight: FontWeight.w800, color: AppColors.textMuted, letterSpacing: 0.5),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 }
@@ -383,6 +484,7 @@ class _ActivityTile extends StatelessWidget {
   final String shift;
   final String time;
   final bool isOpen;
+  final String? varianceStatus;
 
   const _ActivityTile({
     required this.pumpName,
@@ -390,7 +492,32 @@ class _ActivityTile extends StatelessWidget {
     required this.shift,
     required this.time,
     required this.isOpen,
+    this.varianceStatus,
   });
+
+  Color _statusColor() {
+    if (isOpen) return AppColors.amber;
+    switch (varianceStatus) {
+      case 'red':
+        return AppColors.error;
+      case 'amber':
+        return AppColors.amber;
+      default:
+        return AppColors.success;
+    }
+  }
+
+  IconData _statusIcon() {
+    if (isOpen) return Icons.timer_outlined;
+    switch (varianceStatus) {
+      case 'red':
+        return Icons.error_outline_rounded;
+      case 'amber':
+        return Icons.warning_amber_rounded;
+      default:
+        return Icons.check_circle_rounded;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -403,11 +530,7 @@ class _ActivityTile extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(
-            isOpen ? Icons.timer_outlined : Icons.check_circle_rounded,
-            color: isOpen ? AppColors.amber : AppColors.success,
-            size: 18,
-          ),
+          Icon(_statusIcon(), color: _statusColor(), size: 18),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
@@ -422,7 +545,9 @@ class _ActivityTile extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  isOpen ? 'Awaiting closing' : '${FormatService.formatDecimal(volume)} L sold',
+                  isOpen
+                      ? 'Awaiting closing'
+                      : '${FormatService.formatDecimal(volume)} L sold',
                   style: TextStyle(
                     fontSize: 12,
                     color: isOpen ? AppColors.amber : AppColors.textSecondary,
@@ -458,10 +583,7 @@ class _HeaderAction extends StatelessWidget {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(10),
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          shape: BoxShape.circle,
-        ),
+        decoration: const BoxDecoration(color: AppColors.surface, shape: BoxShape.circle),
         child: Icon(icon, color: AppColors.textPrimary, size: 20),
       ),
     );
@@ -480,9 +602,7 @@ class _ProfileAvatar extends StatelessWidget {
       height: 40,
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
-        gradient: LinearGradient(
-          colors: [AppColors.primary, AppColors.primaryLight],
-        ),
+        gradient: LinearGradient(colors: [AppColors.primary, AppColors.primaryLight]),
       ),
       child: Center(
         child: Text(
@@ -500,6 +620,7 @@ class _ProfileAvatar extends StatelessWidget {
 
 class _EmptyActivity extends StatelessWidget {
   const _EmptyActivity();
+
   @override
   Widget build(BuildContext context) {
     return Center(

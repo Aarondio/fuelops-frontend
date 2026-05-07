@@ -18,76 +18,172 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  void _showEditProfileDialog(BuildContext context, AuthProvider auth) {
+  void _showEditProfileSheet(BuildContext context, AuthProvider auth) {
     final nameController = TextEditingController(text: auth.user?.name ?? '');
     final emailController = TextEditingController(text: auth.user?.email ?? '');
-    bool isSubmitting = false;
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppColors.surface,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.lg)),
-          title: const Text('Edit Profile', style: TextStyle(fontWeight: FontWeight.w800)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Name'),
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
-                keyboardType: TextInputType.emailAddress,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ],
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _FormSheet(
+        title: 'Edit Profile',
+        icon: Icons.person_rounded,
+        submitLabel: 'Save Changes',
+        onSubmit: (setSheetState) async {
+          final apiService = ApiService();
+          await apiService.updateProfile(
+            name: nameController.text.trim(),
+            email: emailController.text.trim(),
+          );
+          if (ctx.mounted) Navigator.pop(ctx);
+          if (mounted) {
+            auth.checkAuth();
+            _showSnack('Profile updated', AppColors.success);
+          }
+        },
+        fields: [
+          _SheetField(
+            controller: nameController,
+            label: 'Full Name',
+            icon: Icons.badge_rounded,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
+          _SheetField(
+            controller: emailController,
+            label: 'Email Address',
+            icon: Icons.email_rounded,
+            keyboardType: TextInputType.emailAddress,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showChangePasswordSheet(BuildContext context) {
+    final currentController = TextEditingController();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _FormSheet(
+        title: 'Change Password',
+        icon: Icons.lock_rounded,
+        submitLabel: 'Update Password',
+        onSubmit: (setSheetState) async {
+          if (newController.text != confirmController.text) {
+            throw Exception('Passwords do not match');
+          }
+          final apiService = ApiService();
+          await apiService.changePassword(
+            currentPassword: currentController.text,
+            newPassword: newController.text,
+          );
+          if (ctx.mounted) Navigator.pop(ctx);
+          if (mounted) {
+            _showSnack('Password changed successfully', AppColors.success);
+          }
+        },
+        fields: [
+          _SheetField(
+            controller: currentController,
+            label: 'Current Password',
+            icon: Icons.lock_outline_rounded,
+            obscureText: true,
+          ),
+          _SheetField(
+            controller: newController,
+            label: 'New Password',
+            icon: Icons.lock_rounded,
+            obscureText: true,
+          ),
+          _SheetField(
+            controller: confirmController,
+            label: 'Confirm New Password',
+            icon: Icons.lock_reset_rounded,
+            obscureText: true,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleLogout(BuildContext context, AuthProvider auth) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Drag handle
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.surfaceLight,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-            FilledButton(
-              onPressed: isSubmitting
-                  ? null
-                  : () async {
-                      setDialogState(() => isSubmitting = true);
-                      try {
-                        final apiService = ApiService();
-                        await apiService.updateProfile(
-                          name: nameController.text.trim(),
-                          email: emailController.text.trim(),
-                        );
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          auth.checkAuth(); // Refresh user data
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Profile updated', style: TextStyle(fontWeight: FontWeight.w700)),
-                              backgroundColor: AppColors.success,
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        setDialogState(() => isSubmitting = false);
-                        if (ctx.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Failed: $e', style: const TextStyle(fontWeight: FontWeight.w700)),
-                              backgroundColor: AppColors.error,
-                            ),
-                          );
-                        }
-                      }
-                    },
-              child: isSubmitting
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Save'),
+            const SizedBox(height: 28),
+
+            // Icon
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.error.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.logout_rounded, color: AppColors.error, size: 28),
+            ),
+            const SizedBox(height: 16),
+
+            const Text(
+              'Sign Out',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Unsynced readings are stored locally and will sync automatically when you log back in.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.5),
+            ),
+            const SizedBox(height: 28),
+
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await auth.logout();
+                  if (context.mounted) {
+                    Navigator.of(context).pushReplacementNamed('/login');
+                  }
+                },
+                style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+                child: const Text('Sign Out'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(ctx),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppColors.surfaceLight),
+                  foregroundColor: AppColors.textSecondary,
+                ),
+                child: const Text('Cancel'),
+              ),
             ),
           ],
         ),
@@ -95,98 +191,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showChangePasswordDialog(BuildContext context) {
-    final currentController = TextEditingController();
-    final newController = TextEditingController();
-    final confirmController = TextEditingController();
-    bool isSubmitting = false;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppColors.surface,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.lg)),
-          title: const Text('Change Password', style: TextStyle(fontWeight: FontWeight.w800)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: currentController,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Current Password'),
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: newController,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'New Password'),
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: confirmController,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Confirm Password'),
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: isSubmitting
-                  ? null
-                  : () async {
-                      if (newController.text != confirmController.text) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Passwords do not match', style: TextStyle(fontWeight: FontWeight.w700)),
-                            backgroundColor: AppColors.error,
-                          ),
-                        );
-                        return;
-                      }
-                      setDialogState(() => isSubmitting = true);
-                      try {
-                        final apiService = ApiService();
-                        await apiService.changePassword(
-                          currentPassword: currentController.text,
-                          newPassword: newController.text,
-                        );
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Password changed', style: TextStyle(fontWeight: FontWeight.w700)),
-                              backgroundColor: AppColors.success,
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        setDialogState(() => isSubmitting = false);
-                        if (ctx.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Failed: $e', style: const TextStyle(fontWeight: FontWeight.w700)),
-                              backgroundColor: AppColors.error,
-                            ),
-                          );
-                        }
-                      }
-                    },
-              child: isSubmitting
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Change'),
-            ),
-          ],
-        ),
-      ),
-    );
+  void _showSnack(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message, style: const TextStyle(fontWeight: FontWeight.w700)),
+      backgroundColor: color,
+    ));
   }
 
   @override
@@ -232,19 +241,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: Icons.edit_rounded,
                     label: 'Edit Profile',
                     color: AppColors.primary,
-                    onTap: () => _showEditProfileDialog(context, auth),
+                    onTap: () => _showEditProfileSheet(context, auth),
                   ),
                   _ActionRow(
                     icon: Icons.lock_rounded,
                     label: 'Change Password',
                     color: AppColors.primary,
-                    onTap: () => _showChangePasswordDialog(context),
+                    onTap: () => _showChangePasswordSheet(context),
                   ),
                 ],
               ),
             ),
-
-            const SizedBox(height: 24),
 
             const SizedBox(height: 24),
 
@@ -365,7 +372,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
-            
+
             const SizedBox(height: 32),
             const Center(
               child: Text(
@@ -382,37 +389,245 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
+}
 
-  void _handleLogout(BuildContext context, AuthProvider auth) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.lg)),
-        title: const Text('Sign Out', style: TextStyle(fontWeight: FontWeight.w800)),
-        content: const Text('Are you sure you want to sign out? Unsynced data is safe locally.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+// ── Reusable Bottom Sheet Form ─────────────────────────────────────────────
+
+class _SheetField {
+  final TextEditingController controller;
+  final String label;
+  final IconData icon;
+  final bool obscureText;
+  final TextInputType keyboardType;
+
+  const _SheetField({
+    required this.controller,
+    required this.label,
+    required this.icon,
+    this.obscureText = false,
+    this.keyboardType = TextInputType.text,
+  });
+}
+
+class _FormSheet extends StatefulWidget {
+  final String title;
+  final IconData icon;
+  final String submitLabel;
+  final List<_SheetField> fields;
+  final Future<void> Function(StateSetter setSheetState) onSubmit;
+
+  const _FormSheet({
+    required this.title,
+    required this.icon,
+    required this.submitLabel,
+    required this.fields,
+    required this.onSubmit,
+  });
+
+  @override
+  State<_FormSheet> createState() => _FormSheetState();
+}
+
+class _FormSheetState extends State<_FormSheet> {
+  bool _isSubmitting = false;
+  String? _error;
+  late final List<bool> _obscured;
+
+  @override
+  void initState() {
+    super.initState();
+    _obscured = widget.fields.map((f) => f.obscureText).toList();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _isSubmitting = true;
+      _error = null;
+    });
+    try {
+      await widget.onSubmit(setState);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+          _error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.fromLTRB(24, 16, 24, 36 + bottomInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.surfaceLight,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-            child: const Text('Sign Out'),
+          const SizedBox(height: 24),
+
+          // Header
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(widget.icon, color: AppColors.primary, size: 20),
+              ),
+              const SizedBox(width: 14),
+              Text(
+                widget.title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // Fields
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.surfaceLight,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                for (int i = 0; i < widget.fields.length; i++) ...[
+                  if (i > 0)
+                    const Divider(height: 1, color: AppColors.surface, indent: 52),
+                  _buildField(i),
+                ],
+              ],
+            ),
+          ),
+
+          // Error message
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.error.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 20),
+
+          // Submit button
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: FilledButton(
+              onPressed: _isSubmitting ? null : _submit,
+              child: _isSubmitting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                    )
+                  : Text(widget.submitLabel),
+            ),
           ),
         ],
       ),
     );
+  }
 
-    if (confirmed == true && context.mounted) {
-      await auth.logout();
-      if (context.mounted) {
-        Navigator.of(context).pushReplacementNamed('/login');
-      }
-    }
+  Widget _buildField(int index) {
+    final field = widget.fields[index];
+    final isObscure = _obscured[index];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          Icon(field.icon, size: 16, color: AppColors.textMuted),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: field.controller,
+              obscureText: isObscure,
+              keyboardType: field.keyboardType,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+              decoration: InputDecoration(
+                labelText: field.label,
+                labelStyle: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textMuted,
+                  letterSpacing: 0.3,
+                ),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                fillColor: Colors.transparent,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                suffixIcon: field.obscureText
+                    ? GestureDetector(
+                        onTap: () => setState(() => _obscured[index] = !isObscure),
+                        child: Icon(
+                          isObscure ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                          size: 16,
+                          color: AppColors.textMuted,
+                        ),
+                      )
+                    : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
+
+// ── Profile Components ────────────────────────────────────────────────────
 
 class _HeroProfile extends StatelessWidget {
   final String name;

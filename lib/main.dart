@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'providers/notification_provider.dart';
 import 'providers/reading_provider.dart';
+import 'providers/wholesale_provider.dart';
 import 'services/env_config.dart';
 import 'services/api_service.dart';
 import 'services/connectivity_service.dart';
@@ -36,6 +38,17 @@ void main() async {
   });
 
   final authProvider = AuthProvider(apiService: apiService);
+  final notificationProvider = NotificationProvider(
+    apiService: apiService,
+    connectivityService: connectivityService,
+    databaseService: databaseService,
+  );
+  final wholesaleProvider = WholesaleProvider(
+    apiService: apiService,
+    connectivityService: connectivityService,
+    databaseService: databaseService,
+  );
+
   apiService.onAuthExpired = () {
     authProvider.handleAuthExpired();
   };
@@ -46,6 +59,8 @@ void main() async {
     connectivityService: connectivityService,
     databaseService: databaseService,
     authProvider: authProvider,
+    notificationProvider: notificationProvider,
+    wholesaleProvider: wholesaleProvider,
   ));
 }
 
@@ -55,6 +70,8 @@ class MeterReaderApp extends StatelessWidget {
   final ConnectivityService connectivityService;
   final DatabaseService databaseService;
   final AuthProvider authProvider;
+  final NotificationProvider notificationProvider;
+  final WholesaleProvider wholesaleProvider;
 
   const MeterReaderApp({
     super.key,
@@ -63,6 +80,8 @@ class MeterReaderApp extends StatelessWidget {
     required this.connectivityService,
     required this.databaseService,
     required this.authProvider,
+    required this.notificationProvider,
+    required this.wholesaleProvider,
   });
 
   @override
@@ -70,6 +89,8 @@ class MeterReaderApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: authProvider),
+        ChangeNotifierProvider.value(value: notificationProvider),
+        ChangeNotifierProvider.value(value: wholesaleProvider),
         Provider.value(value: databaseService),
         ChangeNotifierProvider(
           create: (_) => ReadingProvider(
@@ -105,6 +126,8 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
+  bool _notificationsLoaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -117,6 +140,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Widget build(BuildContext context) {
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
+        if (auth.status == AuthStatus.authenticated && !_notificationsLoaded) {
+          _notificationsLoaded = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            context.read<NotificationProvider>().loadNotifications();
+            // Silently prefetch last 7 days of readings into SQLite
+            context.read<ReadingProvider>().prefetchRecentDays(days: 7);
+            // Silently seed wholesale customers + transactions for offline
+            context.read<WholesaleProvider>().prefetchAll();
+          });
+        }
         switch (auth.status) {
           case AuthStatus.initial:
             return Scaffold(

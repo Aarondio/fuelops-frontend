@@ -5,6 +5,10 @@ import '../providers/reading_provider.dart';
 import '../services/api_service.dart';
 import '../services/sync_service.dart';
 import '../theme/app_theme.dart';
+import 'customers_screen.dart';
+import 'deliveries_screen.dart';
+import 'tank_dips_screen.dart';
+import 'alert_settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -235,6 +239,60 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     label: 'Change Password',
                     color: AppColors.primary,
                     onTap: () => _showChangePasswordDialog(context),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            const SizedBox(height: 24),
+
+            // ── Operations Section ────────────────────
+            _Label(text: 'Operations'),
+            const SizedBox(height: 8),
+            _OptionCard(
+              child: Column(
+                children: [
+                  _ActionRow(
+                    icon: Icons.people_rounded,
+                    label: 'Customers',
+                    color: AppColors.primary,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const CustomersScreen()),
+                    ),
+                  ),
+                  _ActionRow(
+                    icon: Icons.local_shipping_rounded,
+                    label: 'Deliveries',
+                    color: AppColors.primary,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const DeliveriesScreen()),
+                    ),
+                  ),
+                  _ActionRow(
+                    icon: Icons.water_drop_rounded,
+                    label: 'Tank Dips',
+                    color: AppColors.primary,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const TankDipsScreen()),
+                    ),
+                  ),
+                  _ActionRow(
+                    icon: Icons.notifications_active_rounded,
+                    label: 'Alert Settings',
+                    color: AppColors.primary,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AlertSettingsScreen()),
+                    ),
+                  ),
+                  _ActionRow(
+                    icon: Icons.history_toggle_off_rounded,
+                    label: 'Alert Logs',
+                    color: AppColors.primary,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AlertLogsScreen()),
+                    ),
                   ),
                 ],
               ),

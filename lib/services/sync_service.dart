@@ -31,11 +31,25 @@ class SyncService extends ChangeNotifier {
   }
 
   void _init() {
+    _resetStuckSyncing();
     _updatePendingCount();
     _connectivitySubscription =
         _connectivityService.connectionStatus.listen((isConnected) {
       if (isConnected) syncPendingReadings();
     });
+  }
+
+  // Readings left in 'syncing' on app crash would be stuck forever — reset them.
+  Future<void> _resetStuckSyncing() async {
+    try {
+      final db = await _databaseService.database;
+      await db.update(
+        'pending_readings',
+        {'sync_status': 'pending', 'error_message': 'Reset after app restart'},
+        where: 'sync_status = ?',
+        whereArgs: ['syncing'],
+      );
+    } catch (_) {}
   }
 
   Future<void> _updatePendingCount() async {
@@ -114,20 +128,33 @@ class SyncService extends ChangeNotifier {
           if (serverId == null && !isClosingOnly) {
             final createdReading = await _apiService.createReading(
               pumpId: reading['pump_id'] as int,
-              openingReading: reading['opening_reading'] as double,
-              closingReading: reading['closing_reading'] as double?,
-              date: DateTime.parse(reading['date'] as String),
+              // SQLite may return whole numbers as int — use num cast to be safe
+              openingReading: (reading['opening_reading'] as num).toDouble(),
+              closingReading: reading['closing_reading'] != null
+                  ? (reading['closing_reading'] as num).toDouble()
+                  : null,
+              date: reading['date'] != null
+                  ? DateTime.tryParse(reading['date'] as String) ?? DateTime.now()
+                  : DateTime.now(),
               shift: reading['shift'] as String,
               notes: reading['notes'] as String?,
               attendantId: reading['attendant_id'] as int?,
-              ocrConfidence: reading['ocr_confidence'] as double?,
+              ocrConfidence: reading['ocr_confidence'] != null
+                  ? (reading['ocr_confidence'] as num).toDouble()
+                  : null,
             );
             serverId = createdReading.id;
             await _databaseService.updatePendingReadingServerId(reading['id'] as int, serverId);
           } else if (serverId != null && isClosingOnly) {
-            final closingReading = reading['closing_reading'] as double?;
-            final declaredLitres = reading['declared_litres_sold'] as double?;
-            final declaredCash = reading['declared_cash_collected'] as double?;
+            final closingReading = reading['closing_reading'] != null
+                ? (reading['closing_reading'] as num).toDouble()
+                : null;
+            final declaredLitres = reading['declared_litres_sold'] != null
+                ? (reading['declared_litres_sold'] as num).toDouble()
+                : null;
+            final declaredCash = reading['declared_cash_collected'] != null
+                ? (reading['declared_cash_collected'] as num).toDouble()
+                : null;
 
             if (closingReading != null && declaredLitres != null && declaredCash != null) {
               await _apiService.closeReading(
@@ -136,7 +163,10 @@ class SyncService extends ChangeNotifier {
                 declaredLitresSold: declaredLitres,
                 declaredCashCollected: declaredCash,
                 notes: reading['notes'] as String?,
-                ocrConfidence: reading['ocr_confidence'] as double?,
+                ocrConfidence: reading['ocr_confidence'] != null
+                    ? (reading['ocr_confidence'] as num).toDouble()
+                    : null,
+                attendantId: reading['attendant_id'] as int?,
               );
             } else {
               // Fallback for legacy offline closings without declared fields

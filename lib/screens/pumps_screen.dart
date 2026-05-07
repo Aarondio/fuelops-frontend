@@ -122,6 +122,29 @@ class _PumpsScreenState extends State<PumpsScreen> {
               ),
             ),
 
+            // ── Offline Banner ────────────────────────
+            if (!reading.isOnline)
+              Container(
+                margin: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.cloud_off_rounded, color: AppColors.warning, size: 14),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Offline — showing cached pumps. Entries will queue for sync.',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.warning),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
             // ── Pump List ─────────────────────────────
             Expanded(
               child: reading.isLoading && reading.pumps.isEmpty

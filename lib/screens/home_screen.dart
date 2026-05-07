@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'app_shell.dart';
+import 'notifications_screen.dart';
+import 'reading_detail_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../config/app_config.dart';
 import '../providers/auth_provider.dart';
+import '../providers/notification_provider.dart';
 import '../providers/reading_provider.dart';
 import '../services/sync_service.dart';
 import '../services/format_service.dart';
@@ -24,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context.read<ReadingProvider>().loadPumps();
       context.read<ReadingProvider>().loadReadings();
       context.read<ReadingProvider>().loadAttendants();
+      context.read<ReadingProvider>().loadDashboardStats();
     });
   }
 
@@ -32,8 +36,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final auth = context.watch<AuthProvider>();
     final reading = context.watch<ReadingProvider>();
     final sync = context.watch<SyncService>();
+    final notifications = context.watch<NotificationProvider>();
     final dateFormat = DateFormat('EEEE, MMMM d');
 
+    final stats = reading.dashboardStats;
+
+    // Snapshot slice once per build — prevents index/length desync between delegate calls
+    final recentReadings = reading.readings.take(5).toList();
+
+    // Fallback to local readings when stats API unavailable
     final closedReadings = reading.readings.where((r) => r.isClosed).toList();
     final totalRevenueVariance = closedReadings.fold<double>(
         0, (sum, r) => sum + (r.revenueVariance ?? 0));
@@ -49,6 +60,8 @@ class _HomeScreenState extends State<HomeScreen> {
           onRefresh: () async {
             await reading.loadPumps();
             await reading.loadReadings();
+            await reading.loadDashboardStats();
+            await notifications.loadNotifications();
           },
           child: CustomScrollView(
             physics: const BouncingScrollPhysics(),
@@ -85,10 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
-                      _HeaderAction(
-                        icon: Icons.notifications_none_rounded,
-                        onTap: () => Navigator.of(context).pushNamed('/pending'),
-                      ),
+                      _NotificationBell(unreadCount: notifications.unreadCount),
                       const SizedBox(width: 10),
                       _ProfileAvatar(name: auth.user?.name ?? 'M'),
                     ],
@@ -164,8 +174,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                   child: _HeroVolumeCard(
-                    volume: reading.readings
-                        .fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)),
+                    volume: stats?.today.volumeSold ??
+                        reading.readings
+                            .fold<double>(0, (sum, r) => sum + (r.volumeSold ?? 0)),
+                    totalRevenue: stats?.today.totalRevenue,
                     shift: AppConfig.getCurrentShift().name,
                   ),
                 ),
@@ -238,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              if (reading.readings.isEmpty)
+              if (recentReadings.isEmpty)
                 const SliverFillRemaining(
                   hasScrollBody: false,
                   child: _EmptyActivity(),
@@ -249,17 +261,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
-                        final r = reading.readings[index];
-                        return _ActivityTile(
-                          pumpName: r.pumpName ?? 'Pump #${r.pumpId}',
-                          volume: r.volumeSold ?? 0,
-                          shift: r.shift,
-                          time: DateFormat('HH:mm').format(r.createdAt),
-                          isOpen: r.isOpen,
-                          varianceStatus: r.varianceStatus,
+                        final r = recentReadings[index];
+                        return GestureDetector(
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => ReadingDetailScreen(reading: r)),
+                          ),
+                          child: _ActivityTile(
+                            pumpName: r.pumpName ?? 'Pump #${r.pumpId}',
+                            volume: r.volumeSold ?? 0,
+                            shift: r.shift,
+                            time: DateFormat('HH:mm').format(r.createdAt),
+                            isOpen: r.isOpen,
+                            varianceStatus: r.varianceStatus,
+                          ),
                         );
                       },
-                      childCount: reading.readings.take(5).length,
+                      childCount: recentReadings.length,
                     ),
                   ),
                 ),
@@ -275,9 +292,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _HeroVolumeCard extends StatelessWidget {
   final double volume;
+  final double? totalRevenue;
   final String shift;
 
-  const _HeroVolumeCard({required this.volume, required this.shift});
+  const _HeroVolumeCard({required this.volume, required this.shift, this.totalRevenue});
 
   @override
   Widget build(BuildContext context) {
@@ -286,8 +304,7 @@ class _HeroVolumeCard extends StatelessWidget {
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        color: AppColors.primary,
-        gradient: LinearGradient(
+        gradient: const LinearGradient(
           colors: [AppColors.primary, AppColors.primaryDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -306,9 +323,20 @@ class _HeroVolumeCard extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          const Text(
-            'Daily Output',
-            style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+          Row(
+            children: [
+              const Text(
+                'Daily Output',
+                style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              if (totalRevenue != null) ...[
+                const Spacer(),
+                Text(
+                  FormatService.formatCurrency(totalRevenue!),
+                  style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: 2),
           Row(
@@ -571,20 +599,46 @@ class _ActivityTile extends StatelessWidget {
   }
 }
 
-class _HeaderAction extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
+class _NotificationBell extends StatelessWidget {
+  final int unreadCount;
 
-  const _HeaderAction({required this.icon, required this.onTap});
+  const _NotificationBell({required this.unreadCount});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: const BoxDecoration(color: AppColors.surface, shape: BoxShape.circle),
-        child: Icon(icon, color: AppColors.textPrimary, size: 20),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+      ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: const BoxDecoration(color: AppColors.surface, shape: BoxShape.circle),
+            child: const Icon(Icons.notifications_none_rounded, color: AppColors.textPrimary, size: 20),
+          ),
+          if (unreadCount > 0)
+            Positioned(
+              top: -2,
+              right: -2,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: const BoxDecoration(
+                  color: AppColors.error,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  unreadCount > 9 ? '9+' : '$unreadCount',
+                  style: const TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

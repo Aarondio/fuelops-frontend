@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import '../models/reading.dart';
 import '../providers/reading_provider.dart';
 import '../services/format_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/reading_card.dart';
+import 'reading_detail_screen.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -77,6 +79,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Future<void> _handleConfirmHandover(BuildContext context, int readingId) async {
+    final provider = context.read<ReadingProvider>();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -101,7 +104,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
 
     if (confirmed == true && mounted) {
-      await context.read<ReadingProvider>().confirmHandover(readingId);
+      await provider.confirmHandover(readingId);
     }
   }
 
@@ -167,6 +170,31 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ],
               ),
             ),
+
+            // Offline / cached-data indicator
+            if (!readingProvider.isOnline)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.cloud_off_rounded, color: AppColors.warning, size: 14),
+                    SizedBox(width: 8),
+                    Text(
+                      'Offline — showing cached data',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.warning,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             // Horizontal Date Scroller
             _HorizontalDateScroller(
@@ -243,19 +271,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             itemCount: filteredReadings.length,
                             itemBuilder: (context, index) {
                               final reading = filteredReadings[index];
-                              return ReadingCard(
-                                pumpName: reading.pumpName ?? 'Pump #${reading.pumpId}',
-                                shift: reading.shift,
-                                openingReading: reading.openingReading,
-                                closingReading: reading.closingReading,
-                                volumeSold: reading.volumeSold,
-                                time: DateFormat('HH:mm').format(reading.createdAt),
-                                notes: reading.notes,
-                                varianceStatus: reading.varianceStatus,
-                                revenueVariance: reading.revenueVariance,
-                                ocrConfidence: reading.ocrConfidence,
-                                lowConfidenceFlag: reading.lowConfidenceFlag,
-                                needsHandover: reading.needsHandover,
+                              return _TappableReadingCard(
+                                reading: reading,
                                 onConfirmHandover: reading.needsHandover
                                     ? () => _handleConfirmHandover(context, reading.id)
                                     : null,
@@ -298,6 +315,37 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _TappableReadingCard extends StatelessWidget {
+  final Reading reading;
+  final VoidCallback? onConfirmHandover;
+
+  const _TappableReadingCard({required this.reading, this.onConfirmHandover});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ReadingDetailScreen(reading: reading)),
+      ),
+      child: ReadingCard(
+        pumpName: reading.pumpName ?? 'Pump #${reading.pumpId}',
+        shift: reading.shift,
+        openingReading: reading.openingReading,
+        closingReading: reading.closingReading,
+        volumeSold: reading.volumeSold,
+        time: DateFormat('HH:mm').format(reading.createdAt),
+        notes: reading.notes,
+        varianceStatus: reading.varianceStatus,
+        revenueVariance: reading.revenueVariance,
+        ocrConfidence: reading.ocrConfidence,
+        lowConfidenceFlag: reading.lowConfidenceFlag,
+        needsHandover: reading.needsHandover,
+        onConfirmHandover: onConfirmHandover,
       ),
     );
   }

@@ -101,14 +101,16 @@ class ApiService {
         return false;
       }
 
-      final response = await http.post(
-        Uri.parse('$_baseUrl/refresh'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $currentToken',
-        },
-      );
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/refresh'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': 'Bearer $currentToken',
+            },
+          )
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body) as Map<String, dynamic>;
@@ -130,9 +132,13 @@ class ApiService {
     }
   }
 
+  static const _kTimeout = Duration(seconds: 10);
+
   Future<http.Response> _get(Uri uri, {int retryCount = 0}) async {
     try {
-      final response = await http.get(uri, headers: await _headers());
+      final response = await http
+          .get(uri, headers: await _headers())
+          .timeout(_kTimeout);
       await _handleResponse(response);
       return response;
     } on _RetryException {
@@ -148,11 +154,13 @@ class ApiService {
     int retryCount = 0,
   }) async {
     try {
-      final response = await http.post(
-        uri,
-        headers: await _headers(withAuth: withAuth),
-        body: body != null ? json.encode(body) : null,
-      );
+      final response = await http
+          .post(
+            uri,
+            headers: await _headers(withAuth: withAuth),
+            body: body != null ? json.encode(body) : null,
+          )
+          .timeout(_kTimeout);
       await _handleResponse(response);
       return response;
     } on _RetryException {
@@ -170,11 +178,13 @@ class ApiService {
     int retryCount = 0,
   }) async {
     try {
-      final response = await http.put(
-        uri,
-        headers: await _headers(withAuth: withAuth),
-        body: body != null ? json.encode(body) : null,
-      );
+      final response = await http
+          .put(
+            uri,
+            headers: await _headers(withAuth: withAuth),
+            body: body != null ? json.encode(body) : null,
+          )
+          .timeout(_kTimeout);
       await _handleResponse(response);
       return response;
     } on _RetryException {
@@ -185,14 +195,29 @@ class ApiService {
     }
   }
 
+  Future<http.Response> _delete(Uri uri, {int retryCount = 0}) async {
+    try {
+      final response = await http
+          .delete(uri, headers: await _headers())
+          .timeout(_kTimeout);
+      await _handleResponse(response);
+      return response;
+    } on _RetryException {
+      if (retryCount < 1) return _delete(uri, retryCount: retryCount + 1);
+      rethrow;
+    }
+  }
+
   // Auth
 
   Future<User> login(String email, String password) async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/login'),
-      headers: await _headers(withAuth: false),
-      body: json.encode({'email': email, 'password': password}),
-    );
+    final response = await http
+        .post(
+          Uri.parse('$_baseUrl/login'),
+          headers: await _headers(withAuth: false),
+          body: json.encode({'email': email, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
 
     final data = await _handleResponse(response, allowRefresh: false);
     final authToken = data['token'] as String;
@@ -203,7 +228,9 @@ class ApiService {
 
   Future<void> logout() async {
     try {
-      await http.post(Uri.parse('$_baseUrl/logout'), headers: await _headers());
+      await http
+          .post(Uri.parse('$_baseUrl/logout'), headers: await _headers())
+          .timeout(const Duration(seconds: 8));
     } finally {
       await _storage.delete(key: 'auth_token');
     }
@@ -307,6 +334,7 @@ class ApiService {
     required double declaredCashCollected,
     String? notes,
     double? ocrConfidence,
+    int? attendantId,
   }) async {
     final body = <String, dynamic>{
       'closingReading': closingReading,
@@ -315,6 +343,7 @@ class ApiService {
     };
     if (notes != null) body['notes'] = notes;
     if (ocrConfidence != null) body['ocrConfidence'] = ocrConfidence;
+    if (attendantId != null) body['attendantId'] = attendantId;
 
     final response = await _post(
       Uri.parse('$_baseUrl/readings/$readingId/close'),
@@ -358,6 +387,300 @@ class ApiService {
     });
   }
 
+  // Dashboard
+
+  Future<Map<String, dynamic>> getDashboardStats() async {
+    final response = await _get(Uri.parse('$_baseUrl/dashboard/stats'));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  // Notifications
+
+  Future<List<Map<String, dynamic>>> getNotifications({bool? unread}) async {
+    var uri = Uri.parse('$_baseUrl/notifications');
+    if (unread != null) {
+      uri = uri.replace(queryParameters: {'unread': unread.toString()});
+    }
+    final response = await _get(uri);
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return ((data['data'] as List?) ?? [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  Future<void> markNotificationRead(String notificationId) async {
+    await _post(Uri.parse('$_baseUrl/notifications/$notificationId/read'));
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    await _post(Uri.parse('$_baseUrl/notifications/read-all'));
+  }
+
+  // Tank Dips
+
+  Future<List<Map<String, dynamic>>> getTankDips({int? tankId}) async {
+    var uri = Uri.parse('$_baseUrl/tank-dips');
+    if (tankId != null) {
+      uri = uri.replace(queryParameters: {'tankId': tankId.toString()});
+    }
+    final response = await _get(uri);
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return ((data['data'] as List?) ?? [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> storeTankDip({
+    required int tankId,
+    required String date,
+    required double openingDip,
+    String? notes,
+  }) async {
+    final response = await _post(Uri.parse('$_baseUrl/tank-dips'), body: {
+      'tankId': tankId,
+      'date': date,
+      'openingDip': openingDip,
+      if (notes != null) 'notes': notes,
+    });
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> closeTankDip(
+    int tankDipId, {
+    required double closingDip,
+    String? notes,
+  }) async {
+    final response = await _post(
+      Uri.parse('$_baseUrl/tank-dips/$tankDipId/close'),
+      body: {
+        'closingDip': closingDip,
+        if (notes != null) 'notes': notes,
+      },
+    );
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  // Deliveries
+
+  Future<List<Map<String, dynamic>>> getDeliveries() async {
+    final response = await _get(Uri.parse('$_baseUrl/deliveries'));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return ((data['data'] as List?) ?? [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> storeDelivery({
+    required int tankId,
+    required String productType,
+    required double quantity,
+    required double unitPrice,
+    required String supplierName,
+    String? deliveryNoteNumber,
+    String? deliveredAt,
+    String? notes,
+  }) async {
+    final response = await _post(Uri.parse('$_baseUrl/deliveries'), body: {
+      'tankId': tankId,
+      'productType': productType,
+      'quantity': quantity,
+      'unitPrice': unitPrice,
+      'supplierName': supplierName,
+      if (deliveryNoteNumber != null) 'deliveryNoteNumber': deliveryNoteNumber,
+      if (deliveredAt != null) 'deliveredAt': deliveredAt,
+      if (notes != null) 'notes': notes,
+    });
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  // Alert Logs
+
+  Future<List<Map<String, dynamic>>> getAlertLogs() async {
+    final response = await _get(Uri.parse('$_baseUrl/alert-logs'));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return ((data['data'] as List?) ?? [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  // Alert Settings
+
+  Future<Map<String, dynamic>> getAlertSettings() async {
+    final response = await _get(Uri.parse('$_baseUrl/settings/alerts'));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateAlertSettings({
+    required bool alertEnabled,
+    required double varianceThresholdPercent,
+    String? whatsappNumber,
+  }) async {
+    final response = await _put(Uri.parse('$_baseUrl/settings/alerts'), body: {
+      'alertEnabled': alertEnabled,
+      'varianceThresholdPercent': varianceThresholdPercent,
+      if (whatsappNumber != null && whatsappNumber.isNotEmpty)
+        'whatsappNumber': whatsappNumber,
+    });
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  // Tanks
+
+  Future<List<Map<String, dynamic>>> getTanks() async {
+    final response = await _get(Uri.parse('$_baseUrl/tanks'));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return ((data['data'] as List?) ?? [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  // Preview Close Reading
+
+  Future<Map<String, dynamic>> previewCloseReading({
+    required int readingId,
+    required double closingReading,
+    required double declaredLitresSold,
+    required double declaredCashCollected,
+  }) async {
+    final response = await _post(
+      Uri.parse('$_baseUrl/readings/$readingId/preview-close'),
+      body: {
+        'closingReading': closingReading,
+        'declaredLitresSold': declaredLitresSold,
+        'declaredCashCollected': declaredCashCollected,
+      },
+    );
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  // Wholesale Customers
+
+  Future<List<Map<String, dynamic>>> getWholesaleCustomers({
+    String? status,
+    String? search,
+  }) async {
+    final params = <String, String>{};
+    if (status != null) params['status'] = status;
+    if (search != null && search.isNotEmpty) params['search'] = search;
+    final uri = Uri.parse('$_baseUrl/wholesale/customers').replace(queryParameters: params.isEmpty ? null : params);
+    final response = await _get(uri);
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return ((data['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> createWholesaleCustomer({
+    required String name,
+    String? companyName,
+    String? phone,
+    String? email,
+    String? address,
+    required double creditLimit,
+    String status = 'active',
+    String? notes,
+  }) async {
+    final response = await _post(Uri.parse('$_baseUrl/wholesale/customers'), body: {
+      'name': name,
+      if (companyName != null && companyName.isNotEmpty) 'companyName': companyName,
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (email != null && email.isNotEmpty) 'email': email,
+      if (address != null && address.isNotEmpty) 'address': address,
+      'creditLimit': creditLimit,
+      'status': status,
+      if (notes != null && notes.isNotEmpty) 'notes': notes,
+    });
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateWholesaleCustomer(
+    int id, {
+    String? name,
+    String? companyName,
+    String? phone,
+    String? email,
+    String? address,
+    double? creditLimit,
+    String? status,
+    String? notes,
+  }) async {
+    final response = await _put(Uri.parse('$_baseUrl/wholesale/customers/$id'), body: {
+      if (name != null) 'name': name,
+      if (companyName != null) 'companyName': companyName,
+      if (phone != null) 'phone': phone,
+      if (email != null) 'email': email,
+      if (address != null) 'address': address,
+      if (creditLimit != null) 'creditLimit': creditLimit,
+      if (status != null) 'status': status,
+      if (notes != null) 'notes': notes,
+    });
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  Future<void> deleteWholesaleCustomer(int id) async {
+    await _delete(Uri.parse('$_baseUrl/wholesale/customers/$id'));
+  }
+
+  // Wholesale Transactions
+
+  Future<List<Map<String, dynamic>>> getWholesaleTransactions({
+    int? customerId,
+    String? productType,
+    String? paymentStatus,
+    String? from,
+    String? to,
+  }) async {
+    final params = <String, String>{};
+    if (customerId != null) params['customerId'] = customerId.toString();
+    if (productType != null) params['productType'] = productType;
+    if (paymentStatus != null) params['paymentStatus'] = paymentStatus;
+    if (from != null) params['from'] = from;
+    if (to != null) params['to'] = to;
+    final uri = Uri.parse('$_baseUrl/wholesale/transactions').replace(queryParameters: params.isEmpty ? null : params);
+    final response = await _get(uri);
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return ((data['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> createWholesaleTransaction({
+    required int wholesaleCustomerId,
+    required String productType,
+    required double quantity,
+    required double unitPrice,
+    required String paymentStatus,
+    double? amountPaid,
+    String? notes,
+  }) async {
+    final response = await _post(Uri.parse('$_baseUrl/wholesale/transactions'), body: {
+      'wholesaleCustomerId': wholesaleCustomerId,
+      'productType': productType,
+      'quantity': quantity,
+      'unitPrice': unitPrice,
+      'paymentStatus': paymentStatus,
+      if (amountPaid != null) 'amountPaid': amountPaid,
+      if (notes != null && notes.isNotEmpty) 'notes': notes,
+    });
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateWholesaleTransaction(
+    int id, {
+    String? paymentStatus,
+    double? amountPaid,
+    String? notes,
+  }) async {
+    final response = await _put(Uri.parse('$_baseUrl/wholesale/transactions/$id'), body: {
+      if (paymentStatus != null) 'paymentStatus': paymentStatus,
+      if (amountPaid != null) 'amountPaid': amountPaid,
+      if (notes != null) 'notes': notes,
+    });
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
   // Uploads
 
   Future<Map<String, dynamic>> uploadImage({
@@ -380,7 +703,8 @@ class ApiService {
     if (uploadableId != null) request.fields['uploadableId'] = uploadableId.toString();
     if (uploadableType != null) request.fields['uploadableType'] = uploadableType;
 
-    final streamedResponse = await request.send();
+    final streamedResponse =
+        await request.send().timeout(const Duration(seconds: 30));
     final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 401 && retryCount < 1) {

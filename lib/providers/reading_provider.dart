@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/attendant.dart';
+import '../models/dashboard_stats.dart';
 import '../models/pump.dart';
 import '../models/reading.dart';
 import '../services/api_service.dart';
@@ -17,12 +18,15 @@ class ReadingProvider extends ChangeNotifier {
   List<Pump> _pumps = [];
   List<Reading> _readings = [];
   List<Attendant> _attendants = [];
+  DashboardStats? _dashboardStats;
   bool _isLoading = false;
+  bool _isPrefetching = false;
   String? _error;
 
   List<Pump> get pumps => _pumps;
   List<Reading> get readings => _readings;
   List<Attendant> get attendants => _attendants;
+  DashboardStats? get dashboardStats => _dashboardStats;
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isOnline => _connectivityService.isConnected;
@@ -85,6 +89,17 @@ class ReadingProvider extends ChangeNotifier {
       }
     } catch (e) {
       _error = 'Failed to load pumps. Check your connection.';
+      // Non-API error (SocketException etc) — still try cache
+      final cached = await _databaseService.getCachedPumps();
+      if (cached.isNotEmpty) {
+        _pumps = cached.map((p) => Pump(
+          id: p['id'] as int,
+          stationId: p['station_id'] as int? ?? 0,
+          name: p['name'] as String,
+          productType: p['product_type'] as String,
+          currentPrice: (p['current_price'] as num).toDouble(),
+        )).toList();
+      }
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -92,9 +107,59 @@ class ReadingProvider extends ChangeNotifier {
   }
 
   Future<void> loadAttendants() async {
-    if (!isOnline) return;
+    if (!isOnline) {
+      final cached = await _databaseService.getCachedAttendants();
+      if (cached.isNotEmpty) {
+        _attendants = cached
+            .map((r) => Attendant(
+                  id: r['id'] as int,
+                  stationId: r['station_id'] as int,
+                  name: r['name'] as String,
+                  phone: r['phone'] as String?,
+                  isActive: (r['is_active'] as int) == 1,
+                ))
+            .toList();
+        notifyListeners();
+      }
+      return;
+    }
     try {
       _attendants = await _apiService.getAttendants();
+      await _databaseService.replaceAllAttendants(
+        _attendants
+            .map((a) => {
+                  'id': a.id,
+                  'station_id': a.stationId,
+                  'name': a.name,
+                  'phone': a.phone,
+                  'is_active': a.isActive ? 1 : 0,
+                })
+            .toList(),
+      );
+      notifyListeners();
+    } catch (_) {
+      // Fall back to cached on API failure
+      final cached = await _databaseService.getCachedAttendants();
+      if (cached.isNotEmpty) {
+        _attendants = cached
+            .map((r) => Attendant(
+                  id: r['id'] as int,
+                  stationId: r['station_id'] as int,
+                  name: r['name'] as String,
+                  phone: r['phone'] as String?,
+                  isActive: (r['is_active'] as int) == 1,
+                ))
+            .toList();
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> loadDashboardStats() async {
+    if (!isOnline) return;
+    try {
+      final raw = await _apiService.getDashboardStats();
+      _dashboardStats = DashboardStats.fromJson(raw);
       notifyListeners();
     } catch (_) {}
   }
@@ -104,85 +169,117 @@ class ReadingProvider extends ChangeNotifier {
     _error = null;
     notifyListeners();
 
+    final targetDate = date ?? DateTime.now();
+    final dateStr = targetDate.toIso8601String().split('T')[0];
+
     try {
-      final targetDate = date ?? DateTime.now();
       if (isOnline) {
         _readings = await _apiService.getReadings(date: targetDate);
-
-        if (DateUtils.isSameDay(targetDate, DateTime.now())) {
-          await _databaseService.cacheReadings(_readings.map((r) => <String, dynamic>{
-            'id': r.id,
-            'pump_id': r.pumpId,
-            'pump_name': r.pumpName,
-            'attendant_id': r.attendantId,
-            'opening_reading': r.openingReading,
-            'closing_reading': r.closingReading,
-            'volume_sold': r.volumeSold,
-            'variance_status': r.varianceStatus,
-            'revenue_variance': r.revenueVariance,
-            'handover_confirmed_at': r.handoverConfirmedAt?.toIso8601String(),
-            'date': r.date.toIso8601String().split('T')[0],
-            'shift': r.shift,
-            'status': r.status,
-            'created_at': r.createdAt.toIso8601String(),
-          }).toList());
-        }
+        // Upsert into cache — accumulates across all dates
+        await _databaseService.upsertReadings(_readings.map((r) => _readingToRow(r)).toList());
       } else {
-        final cached = await _databaseService.getCachedReadings();
-        _readings = cached.map((r) => Reading(
-          id: r['id'] as int,
-          pumpId: r['pump_id'] as int,
-          pumpName: r['pump_name'] as String?,
-          attendantId: r['attendant_id'] as int?,
-          openingReading: (r['opening_reading'] as num).toDouble(),
-          closingReading: r['closing_reading'] != null
-              ? (r['closing_reading'] as num).toDouble()
-              : null,
-          volumeSold: r['volume_sold'] != null
-              ? (r['volume_sold'] as num).toDouble()
-              : null,
-          varianceStatus: r['variance_status'] as String?,
-          revenueVariance: r['revenue_variance'] != null
-              ? (r['revenue_variance'] as num).toDouble()
-              : null,
-          handoverConfirmedAt: r['handover_confirmed_at'] != null
-              ? DateTime.parse(r['handover_confirmed_at'] as String)
-              : null,
-          date: DateTime.parse(r['date'] as String),
-          shift: r['shift'] as String,
-          status: r['status'] as String? ?? 'open',
-          createdAt: DateTime.parse(r['created_at'] as String),
-        )).toList();
+        final cached = await _databaseService.getCachedReadingsForDate(dateStr);
+        _readings = cached.map((r) => _rowToReading(r)).toList();
       }
     } on ApiException catch (e) {
       _error = e.message;
-      final cached = await _databaseService.getCachedReadings();
-      if (cached.isNotEmpty) {
-        _readings = cached.map((r) => Reading(
-          id: r['id'] as int,
-          pumpId: r['pump_id'] as int,
-          pumpName: r['pump_name'] as String?,
-          openingReading: (r['opening_reading'] as num).toDouble(),
-          closingReading: r['closing_reading'] != null
-              ? (r['closing_reading'] as num).toDouble()
-              : null,
-          volumeSold: r['volume_sold'] != null
-              ? (r['volume_sold'] as num).toDouble()
-              : null,
-          varianceStatus: r['variance_status'] as String?,
-          date: DateTime.parse(r['date'] as String),
-          shift: r['shift'] as String,
-          status: r['status'] as String? ?? 'open',
-          createdAt: DateTime.parse(r['created_at'] as String),
-        )).toList();
-      }
-    } catch (e) {
+      final cached = await _databaseService.getCachedReadingsForDate(dateStr);
+      _readings = cached.map((r) => _rowToReading(r)).toList();
+    } catch (_) {
       _error = 'Failed to load readings. Check your connection.';
+      final cached = await _databaseService.getCachedReadingsForDate(dateStr);
+      if (cached.isNotEmpty) {
+        _readings = cached.map(_rowToReading).toList();
+      }
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
+
+  /// Silently prefetches last [days] days in background — no loading state.
+  /// Called once after authentication to seed the offline cache.
+  /// Guard: concurrent calls are no-ops; individual day failures skip, not abort.
+  Future<void> prefetchRecentDays({int days = 7}) async {
+    if (!isOnline || _isPrefetching) return;
+    _isPrefetching = true;
+    try {
+      final cachedDates = await _databaseService.getCachedDates();
+      for (var i = 1; i <= days; i++) {
+        if (!isOnline) break; // abort if connection drops mid-loop
+        final date = DateTime.now().subtract(Duration(days: i));
+        final dateStr = date.toIso8601String().split('T')[0];
+        if (cachedDates.contains(dateStr)) continue; // already cached, skip
+        try {
+          final readings = await _apiService.getReadings(date: date);
+          if (readings.isNotEmpty) {
+            await _databaseService.upsertReadings(readings.map(_readingToRow).toList());
+          }
+          await Future.delayed(const Duration(milliseconds: 300)); // rate limit
+        } catch (_) {
+          continue; // skip this day, try the next
+        }
+      }
+    } finally {
+      _isPrefetching = false;
+    }
+  }
+
+  Map<String, dynamic> _readingToRow(Reading r) => {
+    'id': r.id,
+    'pump_id': r.pumpId,
+    'pump_name': r.pumpName,
+    'attendant_id': r.attendantId,
+    'opening_reading': r.openingReading,
+    'closing_reading': r.closingReading,
+    'volume_sold': r.volumeSold,
+    'declared_litres_sold': r.declaredLitresSold,
+    'declared_cash_collected': r.declaredCashCollected,
+    'price_at_close': r.priceAtClose,
+    'expected_revenue': r.expectedRevenue,
+    'volume_variance': r.volumeVariance,
+    'revenue_variance': r.revenueVariance,
+    'variance_status': r.varianceStatus,
+    'handover_confirmed_at': r.handoverConfirmedAt?.toIso8601String(),
+    'closed_at': r.closedAt?.toIso8601String(),
+    'date': r.date.toIso8601String().split('T')[0],
+    'shift': r.shift,
+    'status': r.status,
+    'notes': r.notes,
+    'ocr_confidence': r.ocrConfidence,
+    'low_confidence_flag': r.lowConfidenceFlag ? 1 : 0,
+    'created_at': r.createdAt.toIso8601String(),
+  };
+
+  Reading _rowToReading(Map<String, dynamic> r) => Reading(
+    id: r['id'] as int,
+    pumpId: r['pump_id'] as int,
+    pumpName: r['pump_name'] as String?,
+    attendantId: r['attendant_id'] as int?,
+    openingReading: (r['opening_reading'] as num).toDouble(),
+    closingReading: r['closing_reading'] != null ? (r['closing_reading'] as num).toDouble() : null,
+    volumeSold: r['volume_sold'] != null ? (r['volume_sold'] as num).toDouble() : null,
+    declaredLitresSold: r['declared_litres_sold'] != null ? (r['declared_litres_sold'] as num).toDouble() : null,
+    declaredCashCollected: r['declared_cash_collected'] != null ? (r['declared_cash_collected'] as num).toDouble() : null,
+    priceAtClose: r['price_at_close'] != null ? (r['price_at_close'] as num).toDouble() : null,
+    expectedRevenue: r['expected_revenue'] != null ? (r['expected_revenue'] as num).toDouble() : null,
+    volumeVariance: r['volume_variance'] != null ? (r['volume_variance'] as num).toDouble() : null,
+    revenueVariance: r['revenue_variance'] != null ? (r['revenue_variance'] as num).toDouble() : null,
+    varianceStatus: r['variance_status'] as String?,
+    handoverConfirmedAt: r['handover_confirmed_at'] != null ? DateTime.tryParse(r['handover_confirmed_at'] as String) : null,
+    closedAt: r['closed_at'] != null ? DateTime.tryParse(r['closed_at'] as String) : null,
+    date: r['date'] != null
+        ? DateTime.tryParse(r['date'] as String) ?? DateTime.now()
+        : DateTime.now(),
+    shift: r['shift'] as String? ?? 'day',
+    status: r['status'] as String? ?? 'open',
+    notes: r['notes'] as String?,
+    ocrConfidence: r['ocr_confidence'] != null ? (r['ocr_confidence'] as num).toDouble() : null,
+    lowConfidenceFlag: (r['low_confidence_flag'] as int? ?? 0) == 1,
+    createdAt: r['created_at'] != null
+        ? DateTime.tryParse(r['created_at'] as String) ?? DateTime.now()
+        : DateTime.now(),
+  );
 
   Reading? getOpenReadingForPump(int pumpId) {
     try {
@@ -206,9 +303,9 @@ class ReadingProvider extends ChangeNotifier {
     _error = null;
     notifyListeners();
 
-    final isConnected = await _connectivityService.checkConnectivity();
-
-    if (!isConnected) {
+    // Use cached isOnline — avoids 5s DNS probe on every submit.
+    // If stale, the API call will fail and the catch block queues anyway.
+    if (!isOnline) {
       final queued = await _syncService.queueReading(
         pumpId: pumpId,
         pumpName: pumpName,
@@ -291,24 +388,33 @@ class ReadingProvider extends ChangeNotifier {
     String? notes,
     File? closingImage,
     double? ocrConfidence,
+    int? attendantId,
   }) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
-    final isConnected = await _connectivityService.checkConnectivity();
-
-    if (!isConnected) {
-      final Reading? original = _readings.firstWhere(
-        (r) => r.id == readingId,
-        orElse: () => throw StateError('Reading not found'),
-      );
-
-      if (original == null) {
-        _error = 'Could not find original reading details.';
-        _isLoading = false;
-        notifyListeners();
-        return false;
+    // Use cached isOnline — avoids 5s DNS probe on every submit.
+    if (!isOnline) {
+      Reading original;
+      try {
+        // Try in-memory list first; fall back to cached readings DB if empty
+        original = _readings.firstWhere((r) => r.id == readingId);
+      } catch (_) {
+        // Last-resort: search cached DB
+        try {
+          final cachedRows = await _databaseService.getCachedReadings();
+          final row = cachedRows.firstWhere(
+            (r) => r['id'] == readingId,
+            orElse: () => throw StateError('not found'),
+          );
+          original = _rowToReading(row);
+        } catch (_) {
+          _error = 'Could not find reading — please reopen the app.';
+          _isLoading = false;
+          notifyListeners();
+          return false;
+        }
       }
 
       final queued = await _syncService.queueReading(
@@ -318,6 +424,7 @@ class ReadingProvider extends ChangeNotifier {
         closingReading: closingReading,
         declaredLitresSold: declaredLitresSold,
         declaredCashCollected: declaredCashCollected,
+        attendantId: attendantId,
         ocrConfidence: ocrConfidence,
         date: DateTime.now(),
         shift: original.shift,
@@ -341,6 +448,7 @@ class ReadingProvider extends ChangeNotifier {
         declaredCashCollected: declaredCashCollected,
         notes: notes,
         ocrConfidence: ocrConfidence,
+        attendantId: attendantId,
       );
 
       if (closingImage != null) {
@@ -355,11 +463,9 @@ class ReadingProvider extends ChangeNotifier {
       await loadReadings();
       return true;
     } on ApiException catch (e) {
-      final Reading? original = _readings.firstWhere(
-        (r) => r.id == readingId,
-        orElse: () => throw StateError('Reading not found'),
-      );
-      if (original != null) {
+      // API-level failure — queue for later sync and return queued result
+      try {
+        final Reading original = _readings.firstWhere((r) => r.id == readingId);
         final queued = await _syncService.queueReading(
           pumpId: original.pumpId,
           pumpName: original.pumpName,
@@ -367,6 +473,7 @@ class ReadingProvider extends ChangeNotifier {
           closingReading: closingReading,
           declaredLitresSold: declaredLitresSold,
           declaredCashCollected: declaredCashCollected,
+          attendantId: attendantId,
           ocrConfidence: ocrConfidence,
           date: DateTime.now(),
           shift: original.shift,
@@ -376,17 +483,45 @@ class ReadingProvider extends ChangeNotifier {
           isClosingOnly: true,
         );
         _error = queued ? '${e.message}. Saved locally for later sync.' : e.message;
-      } else {
+        _isLoading = false;
+        notifyListeners();
+        return queued;
+      } catch (_) {
         _error = e.message;
+        _isLoading = false;
+        notifyListeners();
+        return false;
       }
-      _isLoading = false;
-      notifyListeners();
-      return false;
     } catch (e) {
-      _error = 'Connection lost.';
-      _isLoading = false;
-      notifyListeners();
-      return false;
+      // Connection-level failure (SocketException etc) — also queue, don't lose data
+      try {
+        final Reading original = _readings.firstWhere((r) => r.id == readingId);
+        final queued = await _syncService.queueReading(
+          pumpId: original.pumpId,
+          pumpName: original.pumpName,
+          openingReading: original.openingReading,
+          closingReading: closingReading,
+          declaredLitresSold: declaredLitresSold,
+          declaredCashCollected: declaredCashCollected,
+          attendantId: attendantId,
+          ocrConfidence: ocrConfidence,
+          date: DateTime.now(),
+          shift: original.shift,
+          notes: notes,
+          closingImage: closingImage,
+          serverId: readingId,
+          isClosingOnly: true,
+        );
+        _error = queued ? 'Connection lost. Saved locally.' : 'Connection lost.';
+        _isLoading = false;
+        notifyListeners();
+        return queued;
+      } catch (_) {
+        _error = 'Connection lost.';
+        _isLoading = false;
+        notifyListeners();
+        return false;
+      }
     }
   }
 

@@ -4,10 +4,10 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:ui';
 import '../config/app_config.dart';
-import '../models/attendant.dart';
 import '../models/pump.dart';
 import '../models/reading.dart';
 import '../providers/reading_provider.dart';
+import '../services/api_service.dart';
 import '../services/ocr_service.dart';
 import '../services/image_service.dart';
 import '../services/format_service.dart';
@@ -62,7 +62,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
       } else if (args is Pump) {
         setState(() => _pump = args);
       }
-      context.read<ReadingProvider>().loadAttendants();
+      final provider = context.read<ReadingProvider>();
+      provider.loadAttendants();
+      // Pre-populate attendant from opening reading (closing mode)
+      if (_openReading?.attendantId != null) {
+        setState(() => _selectedAttendantId = _openReading!.attendantId);
+      }
     });
   }
 
@@ -167,9 +172,15 @@ class _CaptureScreenState extends State<CaptureScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final provider = context.read<ReadingProvider>();
+    final wasOnline = provider.isOnline;
+
+    // Validate selected attendant is still active — clear if deactivated since picker rendered
+    final activeAttendantIds = provider.attendants.where((a) => a.isActive).map((a) => a.id).toSet();
+    final safeAttendantId = activeAttendantIds.contains(_selectedAttendantId) ? _selectedAttendantId : null;
+
     if (!_isClosingMode) {
-      final readingProvider = context.read<ReadingProvider>();
-      final completedShifts = readingProvider.readings
+      final completedShifts = provider.readings
           .where((r) => r.pumpId == _pump?.id && DateUtils.isSameDay(r.date, DateTime.now()))
           .map((r) => r.shift.toLowerCase())
           .toList();
@@ -180,11 +191,17 @@ class _CaptureScreenState extends State<CaptureScreen> {
       }
     }
 
+    if (_isClosingMode) {
+      // Show variance preview before final submit (skipped automatically when offline)
+      final confirmed = await _showVariancePreview();
+      if (!confirmed) return;
+    }
+
     setState(() => _isSubmitting = true);
     bool success;
 
     if (_isClosingMode) {
-      success = await context.read<ReadingProvider>().submitClosingReading(
+      success = await provider.submitClosingReading(
         readingId: _openReading!.id,
         closingReading: double.parse(_valueController.text),
         declaredLitresSold: double.parse(_declaredLitresController.text),
@@ -192,22 +209,150 @@ class _CaptureScreenState extends State<CaptureScreen> {
         notes: _notesController.text.isNotEmpty ? _notesController.text : null,
         closingImage: _capturedImage,
         ocrConfidence: _ocrConfidence,
+        attendantId: safeAttendantId,
       );
     } else {
-      success = await context.read<ReadingProvider>().submitOpeningReading(
+      success = await provider.submitOpeningReading(
         pumpId: _pump!.id,
         pumpName: _pump!.name,
         openingReading: double.parse(_valueController.text),
         shift: _selectedShift,
         notes: _notesController.text.isNotEmpty ? _notesController.text : null,
         openingImage: _capturedImage,
-        attendantId: _selectedAttendantId,
+        attendantId: safeAttendantId,
         ocrConfidence: _ocrConfidence,
       );
     }
 
+    if (!mounted) return;
     setState(() => _isSubmitting = false);
-    if (mounted && success) Navigator.pop(context, true);
+
+    if (success) {
+      if (!wasOnline) {
+        // Reading was queued locally — tell the user
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${_isClosingMode ? 'Closing' : 'Opening'} saved locally — will sync when online',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            backgroundColor: AppColors.warning,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 400));
+      }
+      if (mounted) Navigator.pop(context, true);
+    }
+  }
+
+  Future<bool> _showVariancePreview() async {
+    // When offline skip the preview API call entirely — proceed directly to submit.
+    // The reading will be queued; variance is calculated server-side on sync.
+    if (!context.read<ReadingProvider>().isOnline) return true;
+
+    late final Map<String, dynamic> preview;
+    try {
+      final apiService = ApiService();
+      preview = await apiService.previewCloseReading(
+        readingId: _openReading!.id,
+        closingReading: double.parse(_valueController.text),
+        declaredLitresSold: double.parse(_declaredLitresController.text),
+        declaredCashCollected: double.parse(_declaredCashController.text),
+      );
+    } catch (_) {
+      // If preview fails for any reason, allow submit anyway
+      return true;
+    }
+
+    if (!mounted) return false;
+
+    final status = preview['varianceStatus'] as String? ?? 'green';
+    final revenueVariance = (preview['revenueVariance'] as num?)?.toDouble() ?? 0;
+    final volumeSold = (preview['volumeSold'] as num?)?.toDouble() ?? 0;
+
+    Color statusColor;
+    switch (status) {
+      case 'red':
+        statusColor = AppColors.error;
+      case 'amber':
+        statusColor = AppColors.amber;
+      default:
+        statusColor = AppColors.success;
+    }
+
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppColors.surface,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.lg)),
+            title: Row(
+              children: [
+                Icon(
+                  status == 'red'
+                      ? Icons.error_outline_rounded
+                      : status == 'amber'
+                          ? Icons.warning_amber_rounded
+                          : Icons.check_circle_rounded,
+                  color: statusColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Text('VARIANCE PREVIEW',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _PreviewRow(
+                  label: 'Volume Sold',
+                  value: '${FormatService.formatDecimal(volumeSold)} L',
+                ),
+                _PreviewRow(
+                  label: 'Expected Revenue',
+                  value: FormatService.formatCurrency(
+                      (preview['expectedRevenue'] as num?)?.toDouble() ?? 0),
+                ),
+                _PreviewRow(
+                  label: 'Revenue Variance',
+                  value: FormatService.formatCurrency(revenueVariance),
+                  valueColor: statusColor,
+                ),
+                if (status != 'green') ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      status == 'red'
+                          ? 'HIGH VARIANCE DETECTED — manager will be alerted'
+                          : 'MODERATE VARIANCE — verify figures before submitting',
+                      style: TextStyle(
+                          fontSize: 11, fontWeight: FontWeight.w700, color: statusColor),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Review'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: FilledButton.styleFrom(backgroundColor: statusColor),
+                child: const Text('Confirm & Close'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   void _showSnack(String msg, Color color) {
@@ -221,6 +366,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
   Widget build(BuildContext context) {
     final modeLabel = _isClosingMode ? 'Closing' : 'Opening';
     final accentColor = _isClosingMode ? AppColors.warning : AppColors.success;
+    final isOnline = context.watch<ReadingProvider>().isOnline;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -235,15 +381,16 @@ class _CaptureScreenState extends State<CaptureScreen> {
             child: ListView(
               padding: AppSpacing.pagePadding,
               children: [
+                if (!isOnline) _buildOfflineBanner(),
                 if (_pump != null) _buildPumpInfo(),
                 const SizedBox(height: 20),
 
                 if (!_isClosingMode) ...[
                   _buildShiftSelector(),
                   const SizedBox(height: 20),
-                  _buildAttendantPicker(),
-                  const SizedBox(height: 20),
                 ],
+                _buildAttendantPicker(),
+                const SizedBox(height: 20),
 
                 _buildEntryCard(accentColor),
 
@@ -279,6 +426,29 @@ class _CaptureScreenState extends State<CaptureScreen> {
             ),
           ),
           if (_isCompressing || _isProcessingOcr) _buildOverlay(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOfflineBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.cloud_off_rounded, color: AppColors.warning, size: 16),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'OFFLINE — reading will be saved locally and synced when back online',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.warning),
+            ),
+          ),
         ],
       ),
     );
@@ -368,33 +538,65 @@ class _CaptureScreenState extends State<CaptureScreen> {
   }
 
   Widget _buildAttendantPicker() {
-    final attendants = context.watch<ReadingProvider>().attendants;
-    if (attendants.isEmpty) return const SizedBox.shrink();
+    final provider = context.watch<ReadingProvider>();
+    final activeAttendants = provider.attendants.where((a) => a.isActive).toList();
+
+    // Offline with empty cache — show informational disabled state
+    if (activeAttendants.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppColors.surface, borderRadius: BorderRadius.circular(AppRadius.lg)),
+        child: Row(
+          children: [
+            const Icon(Icons.person_off_rounded, size: 16, color: AppColors.textMuted),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                provider.isOnline
+                    ? 'No staff configured — add attendants in settings'
+                    : 'Staff list unavailable offline',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMuted,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Guard: ensure selected ID is valid in the active list — prevents DropdownButtonFormField crash
+    final validId = activeAttendants.any((a) => a.id == _selectedAttendantId)
+        ? _selectedAttendantId
+        : null;
+
+    final label = _isClosingMode ? 'ATTENDANT (CLOSING SHIFT)' : 'ATTENDANT (OPENING SHIFT)';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       decoration: BoxDecoration(
           color: AppColors.surface, borderRadius: BorderRadius.circular(AppRadius.lg)),
       child: DropdownButtonFormField<int>(
-        value: _selectedAttendantId,
-        decoration: const InputDecoration(
-          labelText: 'ATTENDANT',
-          labelStyle: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1),
+        value: validId,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1),
           border: InputBorder.none,
           fillColor: Colors.transparent,
         ),
         dropdownColor: AppColors.surface,
-        hint: const Text('Select attendant (optional)',
+        hint: const Text('Select staff on duty (optional)',
             style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
         items: [
           const DropdownMenuItem<int>(value: null, child: Text('None')),
-          ...attendants
-              .where((a) => a.isActive)
-              .map((a) => DropdownMenuItem<int>(
-                    value: a.id,
-                    child: Text(a.name,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  )),
+          ...activeAttendants.map((a) => DropdownMenuItem<int>(
+                value: a.id,
+                child: Text(a.name,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              )),
         ],
         onChanged: (value) => setState(() => _selectedAttendantId = value),
       ),
@@ -620,6 +822,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
   }
 
   Widget _buildOverlay() {
+
     return Container(
       color: AppColors.overlay,
       child: BackdropFilter(
@@ -639,6 +842,38 @@ class _CaptureScreenState extends State<CaptureScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PreviewRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _PreviewRow({required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: valueColor ?? AppColors.textPrimary,
+            ),
+          ),
+        ],
       ),
     );
   }

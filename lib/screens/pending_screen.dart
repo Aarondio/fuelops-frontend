@@ -25,8 +25,10 @@ class _PendingScreenState extends State<PendingScreen> {
   }
 
   Future<void> _loadPendingReadings() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     final readings = await context.read<ReadingProvider>().getPendingReadings();
+    if (!mounted) return;
     setState(() {
       _pendingReadings = readings;
       _isLoading = false;
@@ -159,7 +161,7 @@ class _PendingScreenState extends State<PendingScreen> {
 
   Widget _buildPendingCard(Map<String, dynamic> reading) {
     final status = reading['sync_status'] as String;
-    final createdAt = DateTime.parse(reading['created_at'] as String);
+    final createdAt = DateTime.tryParse(reading['created_at'] as String? ?? '') ?? DateTime.now();
     final dateFormat = DateFormat('HH:mm');
     final openingReading = (reading['opening_reading'] as num).toDouble();
     final closingReading = (reading['closing_reading'] as num?)?.toDouble();

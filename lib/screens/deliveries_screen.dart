@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/reading_provider.dart';
 import '../models/delivery.dart';
+import '../models/supplier.dart';
 import '../models/tank.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
@@ -21,6 +22,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
   final DatabaseService _databaseService = DatabaseService();
   List<Delivery> _deliveries = [];
   List<Tank> _tanks = [];
+  List<Supplier> _suppliers = [];
   bool _isLoading = true;
   String? _error;
 
@@ -40,16 +42,20 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
     final isOnline = context.read<ReadingProvider>().isOnline;
     List<Delivery> deliveries = [];
     List<Tank> tanks = [];
+    List<Supplier> suppliers = [];
     String? deliveryError;
 
     if (!isOnline) {
       // Offline: serve from cache directly
       final cached = await _databaseService.getCachedDeliveries();
       deliveries = cached.map(_rowToDelivery).toList();
+      final cachedSuppliers = await _databaseService.getCachedSuppliers();
+      suppliers = cachedSuppliers.map(Supplier.fromRow).toList();
       if (!mounted) return;
       setState(() {
         _deliveries = deliveries;
         _tanks = tanks;
+        _suppliers = suppliers;
         _error = null;
         _isLoading = false;
       });
@@ -79,12 +85,23 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
           // Non-critical: only affects adding new deliveries
         }
       }(),
+      () async {
+        try {
+          final raw = await _apiService.getSuppliers();
+          suppliers = raw.map((j) => Supplier.fromJson(j)).toList();
+          await _databaseService.replaceAllSuppliers(suppliers.map((s) => s.toRow()).toList());
+        } catch (_) {
+          final cached = await _databaseService.getCachedSuppliers();
+          suppliers = cached.map(Supplier.fromRow).toList();
+        }
+      }(),
     ]);
 
     if (!mounted) return;
     setState(() {
       _deliveries = deliveries;
       _tanks = tanks;
+      _suppliers = suppliers;
       _error = deliveryError;
       _isLoading = false;
     });
@@ -145,8 +162,9 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
       ),
       builder: (ctx) => _AddDeliverySheet(
         tanks: _tanks,
+        suppliers: _suppliers,
         onSaved: (delivery) {
-          setState(() => _deliveries.insert(0, delivery));
+          _load(); // Reload to pick up new supplier if created
         },
       ),
     );
@@ -321,9 +339,10 @@ class _DeliveryTile extends StatelessWidget {
 
 class _AddDeliverySheet extends StatefulWidget {
   final List<Tank> tanks;
+  final List<Supplier> suppliers;
   final Function(Delivery) onSaved;
 
-  const _AddDeliverySheet({required this.tanks, required this.onSaved});
+  const _AddDeliverySheet({required this.tanks, required this.suppliers, required this.onSaved});
 
   @override
   State<_AddDeliverySheet> createState() => _AddDeliverySheetState();
@@ -333,18 +352,20 @@ class _AddDeliverySheetState extends State<_AddDeliverySheet> {
   final _formKey = GlobalKey<FormState>();
   final ApiService _apiService = ApiService();
 
-  final _supplierController = TextEditingController();
   final _quantityController = TextEditingController();
   final _unitPriceController = TextEditingController();
   final _noteNumberController = TextEditingController();
   final _notesController = TextEditingController();
 
   Tank? _selectedTank;
+  Supplier? _selectedSupplier;
+  late List<Supplier> _suppliers;
   bool _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
+    _suppliers = List.of(widget.suppliers);
     if (widget.tanks.isNotEmpty) {
       _selectedTank = widget.tanks.first;
     }
@@ -352,7 +373,6 @@ class _AddDeliverySheetState extends State<_AddDeliverySheet> {
 
   @override
   void dispose() {
-    _supplierController.dispose();
     _quantityController.dispose();
     _unitPriceController.dispose();
     _noteNumberController.dispose();
@@ -360,11 +380,96 @@ class _AddDeliverySheetState extends State<_AddDeliverySheet> {
     super.dispose();
   }
 
+  void _showAddSupplierDialog() {
+    final nameController = TextEditingController();
+    final phoneController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        bool saving = false;
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            backgroundColor: AppColors.surface,
+            title: const Text(
+              'NEW SUPPLIER',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1, color: AppColors.primary),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(labelText: 'Supplier Name *'),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: phoneController,
+                  decoration: const InputDecoration(labelText: 'Phone (optional)'),
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        final name = nameController.text.trim();
+                        if (name.isEmpty) return;
+                        setDialogState(() => saving = true);
+                        try {
+                          final raw = await _apiService.createSupplier(
+                            name: name,
+                            phone: phoneController.text.trim().isNotEmpty ? phoneController.text.trim() : null,
+                          );
+                          final supplier = Supplier.fromJson(raw);
+                          if (mounted) {
+                            setState(() {
+                              _suppliers.add(supplier);
+                              _selectedSupplier = supplier;
+                            });
+                          }
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        } on ApiException catch (e) {
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed: $e', style: const TextStyle(fontWeight: FontWeight.w700)),
+                                backgroundColor: AppColors.error,
+                              ),
+                            );
+                          }
+                          setDialogState(() => saving = false);
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Save'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedTank == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Select a tank'), backgroundColor: AppColors.error),
+      );
+      return;
+    }
+    if (_selectedSupplier == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select a supplier'), backgroundColor: AppColors.error),
       );
       return;
     }
@@ -376,7 +481,7 @@ class _AddDeliverySheetState extends State<_AddDeliverySheet> {
         productType: _selectedTank!.productType,
         quantity: double.parse(_quantityController.text),
         unitPrice: double.parse(_unitPriceController.text),
-        supplierName: _supplierController.text.trim(),
+        supplierId: _selectedSupplier!.id,
         deliveryNoteNumber: _noteNumberController.text.trim().isNotEmpty
             ? _noteNumberController.text.trim()
             : null,
@@ -470,13 +575,50 @@ class _AddDeliverySheetState extends State<_AddDeliverySheet> {
               ),
               const SizedBox(height: 16),
 
-              TextFormField(
-                controller: _supplierController,
-                decoration: const InputDecoration(labelText: 'SUPPLIER NAME'),
-                style: const TextStyle(fontWeight: FontWeight.w600),
-                validator: (v) => (v == null || v.isEmpty) ? 'REQUIRED' : null,
+              // Supplier selector
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: DropdownButtonFormField<Supplier>(
+                  value: _selectedSupplier,
+                  decoration: const InputDecoration(
+                    labelText: 'SUPPLIER',
+                    labelStyle: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1),
+                    border: InputBorder.none,
+                    fillColor: Colors.transparent,
+                  ),
+                  dropdownColor: AppColors.surface,
+                  hint: const Text('Select supplier', style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+                  items: _suppliers.map((s) {
+                    return DropdownMenuItem<Supplier>(
+                      value: s,
+                      child: Text(
+                        s.name,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (s) => setState(() => _selectedSupplier = s),
+                  validator: (v) => v == null ? 'REQUIRED' : null,
+                ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _showAddSupplierDialog,
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('New Supplier', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
 
               Row(
                 children: [

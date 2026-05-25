@@ -16,7 +16,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -178,6 +178,17 @@ class DatabaseService {
         name TEXT NOT NULL,
         phone TEXT,
         is_active INTEGER DEFAULT 1
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE cached_suppliers (
+        id INTEGER PRIMARY KEY,
+        station_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        phone TEXT,
+        address TEXT,
+        created_at TEXT NOT NULL
       )
     ''');
   }
@@ -348,6 +359,20 @@ class DatabaseService {
             name TEXT NOT NULL,
             phone TEXT,
             is_active INTEGER DEFAULT 1
+          )
+        ''');
+      } catch (_) {}
+    }
+    if (oldVersion < 11) {
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS cached_suppliers (
+            id INTEGER PRIMARY KEY,
+            station_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            phone TEXT,
+            address TEXT,
+            created_at TEXT NOT NULL
           )
         ''');
       } catch (_) {}
@@ -645,5 +670,22 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getCachedAttendants() async {
     final db = await database;
     return await db.query('cached_attendants', orderBy: 'name ASC');
+  }
+
+  // Suppliers Cache
+
+  Future<void> replaceAllSuppliers(List<Map<String, dynamic>> suppliers) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('cached_suppliers');
+      for (final s in suppliers) {
+        await txn.insert('cached_suppliers', s);
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedSuppliers() async {
+    final db = await database;
+    return await db.query('cached_suppliers', orderBy: 'name ASC');
   }
 }

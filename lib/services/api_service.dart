@@ -461,6 +461,28 @@ class ApiService {
     return data['data'] as Map<String, dynamic>;
   }
 
+  // Suppliers
+
+  Future<List<Map<String, dynamic>>> getSuppliers() async {
+    final response = await _get(Uri.parse('$_baseUrl/suppliers'));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return ((data['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> createSupplier({
+    required String name,
+    String? phone,
+    String? address,
+  }) async {
+    final response = await _post(Uri.parse('$_baseUrl/suppliers'), body: {
+      'name': name,
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (address != null && address.isNotEmpty) 'address': address,
+    });
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    return data['data'] as Map<String, dynamic>;
+  }
+
   // Deliveries
 
   Future<List<Map<String, dynamic>>> getDeliveries() async {
@@ -475,7 +497,7 @@ class ApiService {
     required String productType,
     required double quantity,
     required double unitPrice,
-    required String supplierName,
+    required int supplierId,
     String? deliveryNoteNumber,
     String? deliveredAt,
     String? notes,
@@ -485,7 +507,7 @@ class ApiService {
       'productType': productType,
       'quantity': quantity,
       'unitPrice': unitPrice,
-      'supplierName': supplierName,
+      'supplierId': supplierId,
       if (deliveryNoteNumber != null) 'deliveryNoteNumber': deliveryNoteNumber,
       if (deliveredAt != null) 'deliveredAt': deliveredAt,
       if (notes != null) 'notes': notes,
